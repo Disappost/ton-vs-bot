@@ -1,4 +1,5 @@
 import datetime
+import os
 import random
 import re
 import traceback
@@ -64,18 +65,30 @@ def main():
     global CUR
 
     try:
-        BOT = telegram.Bot(__import__('gag_secrets').bot_token)
+        if heroku:
+            bot_token = os.environ['bot_token']
+        else:
+            bot_token = __import__('gag_secrets').bot_token
+
+        BOT = telegram.Bot(bot_token)
 
         tg_delay(log_chat_id)
         BOT.send_message(log_chat_id, start_message, disable_notification=True)
 
-        with psycopg2.connect(host='localhost',
-                              database='ton_vs_bot_db_2',
-                              user=__import__('gag_secrets').db_user,
-                              password=__import__('gag_secrets').db_password) as CON:
-            with CON.cursor() as CUR:
-                while True:
-                    run()
+        if heroku:
+            db_url = os.environ['DATABASE_URL']
+            with psycopg2.connect(db_url, sslmode='require') as CON:
+                with CON.cursor() as CUR:
+                    while True:
+                        run()
+        else:
+            with psycopg2.connect(host='localhost',
+                                  database='ton_vs_bot_db_2',
+                                  user=__import__('gag_secrets').db_user,
+                                  password=__import__('gag_secrets').db_password) as CON:
+                with CON.cursor() as CUR:
+                    while True:
+                        run()
 
     except:
         my_traceback(1)

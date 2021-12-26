@@ -1,3 +1,5 @@
+heroku = True
+
 channel_chat_id = -1001794964683
 channel_link = 'https://t.me/c/1794964683'
 group_chat_id = -1001798942353
