@@ -755,7 +755,7 @@ class CommandsInPM:
                                          '                {}\n' \
                                          '                    {}'.format(
                 '🟡' if volunteer_id else '🔴',
-                get_tg_user_info(user_id),
+                escape_markdown(get_tg_user_info(user_id)),
                 user_language,
                 text_opening_time,
                 text_time_of_last_message_by_user,
@@ -837,7 +837,7 @@ class CommandsInPM:
                                          '            {}\n' \
                                          '                {}\n' \
                                          '                    {}'.format(
-                get_tg_user_info(user_id),
+                escape_markdown(get_tg_user_info(user_id)),
                 language,
                 text_opening_time,
                 text_time_of_last_message_by_user,
@@ -1890,6 +1890,15 @@ def truncate_big_text(mode, text):
             text = text[0:max_allowed_text_length - len(delimiter)] + delimiter
 
     return text
+
+
+def escape_markdown(str):
+    characters_list = ['\\', '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+
+    for char in characters_list:
+        str = str.replace(char, '\\' + char)
+
+    return str
 
 
 def add_to_history(**kwargs):
