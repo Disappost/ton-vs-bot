@@ -1,9 +1,13 @@
 import psycopg2
 
-with psycopg2.connect(host='localhost',
-                      database='ton_vs_bot_db_2',
-                      user=__import__('gag_secrets').db_user,
-                      password=__import__('gag_secrets').db_password) as con:
+db_uri = ''
+with psycopg2.connect(db_uri, sslmode='require') as con:
+
+# with psycopg2.connect(host='localhost',
+#                       database='ton_vs_bot_db_2',
+#                       user=__import__('gag_secrets').db_user,
+#                       password=__import__('gag_secrets').db_password) as con:
+
     with con.cursor() as cur:
         cur.execute('DROP TABLE IF EXISTS flood_control')
         cur.execute('''CREATE TABLE flood_control (
