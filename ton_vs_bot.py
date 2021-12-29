@@ -733,17 +733,18 @@ class CommandsInPM:
             time_of_last_message_by_volunteers = row[5]
             channel_message_id = row[6]
 
-            text_opening_time = int((datetime.datetime.utcnow() - opening_time).seconds / 60)
+            text_opening_time = str(datetime.datetime.utcnow().replace(microsecond=0) - opening_time)
 
             if time_of_last_message_by_user:
-                text_time_of_last_message_by_user = int(
-                    (datetime.datetime.utcnow() - time_of_last_message_by_user).seconds / 60)
+                text_time_of_last_message_by_user = str(datetime.datetime.utcnow().replace(microsecond=0)
+                                                        - time_of_last_message_by_user)
+
             else:
                 text_time_of_last_message_by_user = 'no messages'
 
             if time_of_last_message_by_volunteers:
-                text_time_of_last_message_by_volunteers = int(
-                    (datetime.datetime.utcnow() - time_of_last_message_by_volunteers).seconds / 60)
+                text_time_of_last_message_by_volunteers = str(datetime.datetime.utcnow().replace(microsecond=0)
+                                                              - time_of_last_message_by_volunteers)
             else:
                 text_time_of_last_message_by_volunteers = 'no answer'
 
@@ -816,17 +817,17 @@ class CommandsInPM:
             time_of_last_message_by_volunteers = row[4]
             channel_message_id = row[5]
 
-            text_opening_time = int((datetime.datetime.utcnow() - opening_time).seconds / 60)
+            text_opening_time = str(datetime.datetime.utcnow().replace(microsecond=0) - opening_time)
 
             if time_of_last_message_by_user:
-                text_time_of_last_message_by_user = int(
-                    (datetime.datetime.utcnow() - time_of_last_message_by_user).seconds / 60)
+                text_time_of_last_message_by_user = str(datetime.datetime.utcnow().replace(microsecond=0)
+                                                        - time_of_last_message_by_user)
             else:
                 text_time_of_last_message_by_user = 'no message'
 
             if time_of_last_message_by_volunteers:
-                text_time_of_last_message_by_volunteers = int(
-                    (datetime.datetime.utcnow() - time_of_last_message_by_volunteers).seconds / 60)
+                text_time_of_last_message_by_volunteers = str(datetime.datetime.utcnow().replace(microsecond=0)
+                                                              - time_of_last_message_by_volunteers)
             else:
                 text_time_of_last_message_by_volunteers = 'no answer'
 
