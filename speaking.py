@@ -1,5 +1,3 @@
-import pprint
-
 tg_languages_dict = {
     'en': 'eng',
     'ru': 'rus'
@@ -12,12 +10,24 @@ languages_dict = {
 
 speaking_dict = {
     'greeting_message': {
-        'eng': 'english greeting message\n'
+        'eng': '👋\n'
                '\n'
-               'change speaking language: /lang',
-        'rus': 'русскоязычное преведственное сообщение\n'
+               'Welcome to the TON Volunteer Support bot.\n'
                '\n'
-               'поменять изык общения: /lang'
+               'Describe your problem below.\n'
+               '\n'
+               'To change speaking language enter /lang.\n'
+               '\n'
+               'Please consider supporting volunteers by sending them some Toncoins. You can send a check in the chat using @CryptoBot or ask for a Toncoin-wallet address for donation. Thank you.',
+        'rus': '👋\n'
+               '\n'
+               'Приветствуем вас в боте волонтёрской поддержки TON.\n'
+               '\n'
+               'Опишите ниже вашу проблему.\n'
+               '\n'
+               'Чтобы изменить язык общения введите /lang.\n'
+               '\n'
+               'Пожалуйста рассмотрите возможность поддержать волонтёров отправив им немного тонкойнов. Вы можете отправить в чате чек используя @CryptoBot или попросить адрес TON-кошелька для пожертвования. Спасибо.\n'
     },
 
     'lang_command': {
@@ -170,8 +180,8 @@ speaking_dict = {
     },
 
     'dont_send_messages_outside_comments': {
-        'eng': 'don\'t send messages outside comments',
-        'rus': 'не отправляйте сообщения вне комментариев'
+        'eng': 'ℹ don\'t send messages outside comments',
+        'rus': 'ℹ не отправляйте сообщения вне комментариев'
     },
 
     'I_dont_know_this_command': {

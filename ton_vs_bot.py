@@ -684,7 +684,7 @@ class CommandsInPM:
 
                 speaking('language_was_changed', message, reply=True, mono=True)
 
-                speaking('greeting_message', message)
+                speaking('greeting_message', message, cut_big_text=True)
 
                 LAST_TIME_OF_GREETING_MESSAGE_DICT[message.from_user.id] = time()
 
@@ -761,7 +761,7 @@ class CommandsInPM:
                 text_opening_time,
                 text_time_of_last_message_by_user,
                 text_time_of_last_message_by_volunteers,
-                '[link]({}/{})'.format(channel_link, channel_message_id)
+                '[link to post]({}/{})'.format(channel_link, channel_message_id)
             )
 
             if len(response_text + candidate_to_response_text) > 4096:
@@ -843,7 +843,7 @@ class CommandsInPM:
                 text_opening_time,
                 text_time_of_last_message_by_user,
                 text_time_of_last_message_by_volunteers,
-                '[link]({}/{})'.format(channel_link, channel_message_id)
+                '[link to post]({}/{})'.format(channel_link, channel_message_id)
             )
 
             if len(response_text + candidate_to_response_text) > 4096:
@@ -1242,7 +1242,7 @@ class CommandsInGroup:
                 query_result = CUR.fetchone()
 
                 if not query_result:
-                    until_datetime = message.date.replace(tzinfo=None) + datetime.timedelta(seconds=60 * mute_value)
+                    until_datetime = message.date.replace(tzinfo=None) + datetime.timedelta(days=mute_value)
 
                     CUR.execute(
                         'INSERT INTO muted_users (user_id, muted_until) VALUES (%s, %s)',
