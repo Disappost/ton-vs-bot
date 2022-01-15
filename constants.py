@@ -13,3 +13,9 @@ else:
 
 DG_user_id = 1168253329
 tg_delays = True
+
+tg_wallet_bots_dict = {
+    1622808649: '@CryptoTestnetBot',
+    1559501630: '@CryptoBot',
+    1985737506: '@wallet'
+}

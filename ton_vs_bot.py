@@ -586,7 +586,10 @@ def handle_edited_message(edited_message):
             message_id_1 = query_result[1]
 
             tg_delay(chat_id_1)
-            BOT.edit_message_text(edited_message.text, chat_id_1, message_id_1)
+            BOT.edit_message_text(edited_message.text,
+                                  chat_id_1,
+                                  message_id_1,
+                                  entities=edited_message.entities)
 
             if edited_message.chat.id == group_chat_id:
                 user_id = chat_id_1
@@ -1572,108 +1575,72 @@ def tg_delay(target_chat_id):
 
 
 def my_forward_message(to_chat, message, reply_to_message_id=None):
+    sent_message = None
     history_column_1 = None
     history_column_2 = None
-    sent_message = None
 
     try:
         tg_delay(to_chat)
 
-        if message.text:
-            if bool(re.match('test_error.*', message.text)):
-                test_error(message)
-
-            history_column_1 = 'text'
+        if message.text \
+                and message.via_bot and message.via_bot.id in tg_wallet_bots_dict:
+            history_column_1 = tg_wallet_bots_dict[message.via_bot.id]
             history_column_2 = message.text
 
-            if message.reply_markup:
-                sent_message = BOT.send_message(to_chat,
-                                                message.text,
-                                                reply_to_message_id=reply_to_message_id,
-                                                reply_markup=message.reply_markup)
-            else:
-                sent_message = BOT.send_message(to_chat,
-                                                message.text,
-                                                reply_to_message_id=reply_to_message_id)
-
-        elif message.photo:
-            history_column_1 = 'photo'
-            history_column_2 = message.photo[-1].file_id
-            sent_message = BOT.send_photo(to_chat, message.photo[-1], reply_to_message_id=reply_to_message_id)
-
-        elif message.sticker:
-            history_column_1 = 'sticker'
-            history_column_2 = message.sticker.file_id
-            sent_message = BOT.send_sticker(to_chat, message.sticker, reply_to_message_id=reply_to_message_id)
-
-        elif message.video:
-            history_column_1 = 'video'
-            history_column_2 = message.video.file_id
-            sent_message = BOT.send_video(to_chat, message.video, reply_to_message_id=reply_to_message_id)
-
-        elif message.audio:
-            history_column_1 = 'audio'
-            history_column_2 = message.audio.file_id
-            sent_message = BOT.send_audio(to_chat, message.audio, reply_to_message_id=reply_to_message_id)
-
-        elif message.voice:
-            history_column_1 = 'voice'
-            history_column_2 = message.voice.file_id
-            sent_message = BOT.send_voice(to_chat, message.voice, reply_to_message_id=reply_to_message_id)
-
-        elif message.video_note:
-            history_column_1 = 'video_note'
-            history_column_2 = message.video_note.file_id
-            sent_message = BOT.send_video_note(to_chat, message.video_note, reply_to_message_id=reply_to_message_id)
-
-        elif message.animation:
-            history_column_1 = 'animation'
-            history_column_2 = message.animation.file_id
-            sent_message = BOT.send_animation(to_chat, message.animation, reply_to_message_id=reply_to_message_id)
-
-        elif message.document:
-            history_column_1 = 'document'
-            history_column_2 = message.document.file_id
-            sent_message = BOT.send_document(to_chat, message.document, reply_to_message_id=reply_to_message_id)
-
-        # elif message.poll:
-        #     BOT.send_poll(to_chat, message.poll, reply_to_message_id=reply_to_message_id)
-        #     history_column_1 = 'poll'
-
-        # elif message.dice:
-        #     BOT.send_dice(to_chat, message.dice, reply_to_message_id=reply_to_message_id)
-        #     history_column_1 = 'dice'
-
-        # elif message.game:
-        #     BOT.send_game(to_chat, message.game, reply_to_message_id=reply_to_message_id)
-        #     history_column_1 = 'game'
-
-        # elif message.contact:
-        #     BOT.send_contact(to_chat, message.contact, reply_to_message_id=reply_to_message_id)
-        #     history_column_1 = 'contact'
-
-        # elif message.location:
-        #     BOT.send_location(to_chat, message.location, reply_to_message_id=reply_to_message_id)
-        #     history_column_1 = 'location'
-
-        # elif message.venue:
-        #     BOT.send_venue(to_chat, message.venue, reply_to_message_id=reply_to_message_id)
-        #     history_column_1 = 'venue'
-
-        # elif message.invoice:
-        #     BOT.send_invoice(to_chat, message.invoice, reply_to_message_id=reply_to_message_id)
-        #     history_column_1 = 'invoice'
+            sent_message = BOT.send_message(to_chat,
+                                            '{}: {}'.format(tg_wallet_bots_dict[message.via_bot.id], message.text),
+                                            reply_to_message_id=reply_to_message_id,
+                                            reply_markup=message.reply_markup)
 
         else:
-            history_column_1 = 'unsupported_message'
+            if message.text:
+                if bool(re.match('test_error.*', message.text)):
+                    test_error(message)
 
-            speaking('you_sent_unsupported_message', message, reply=True, mono=True)
+            sent_message = BOT.copy_message(to_chat,
+                                            message.chat.id,
+                                            message.message_id,
+                                            reply_to_message_id=reply_to_message_id)
 
-            tg_delay(log_chat_id)
-            BOT.send_message(log_chat_id, 'found unsupported message:')
+            if message.text:
+                history_column_1 = 'text'
+                history_column_2 = message.text
 
-            tg_delay(log_chat_id)
-            BOT.forward_message(log_chat_id, message.chat.id, message.message_id)
+            elif message.photo:
+                history_column_1 = 'photo'
+                history_column_2 = message.photo[-1].file_id
+
+            elif message.sticker:
+                history_column_1 = 'sticker'
+                history_column_2 = message.sticker.file_id
+
+            elif message.video:
+                history_column_1 = 'video'
+                history_column_2 = message.video.file_id
+
+            elif message.audio:
+                history_column_1 = 'audio'
+                history_column_2 = message.audio.file_id
+
+            elif message.voice:
+                history_column_1 = 'voice'
+                history_column_2 = message.voice.file_id
+
+            elif message.video_note:
+                history_column_1 = 'video_note'
+                history_column_2 = message.video_note.file_id
+
+            elif message.animation:
+                history_column_1 = 'animation'
+                history_column_2 = message.animation.file_id
+
+            elif message.document:
+                history_column_1 = 'document'
+                history_column_2 = message.document.file_id
+
+            else:
+                history_column_1 = 'other_message_type'
+                history_column_2 = None
 
     except telegram.error.BadRequest as exc:
         if str(exc) == 'Replied message not found':
