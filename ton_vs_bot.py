@@ -437,10 +437,10 @@ def channel_post(message):
 
 def message_in_group(message):
     if message.reply_to_message:
-        if (message.text and len(message.text) >= 2 and message.text[0:2] == '//') \
+        if (message.text and len(message.text) >= 2 and message.text[0:2] in ['//', '\\\\']) \
                 or \
                 (message.reply_to_message.text and len(message.reply_to_message.text) >= 2
-                 and message.reply_to_message.text[0:2] == '//'):
+                 and message.reply_to_message.text[0:2] in ['//', '\\\\']):
             return
 
         if message.text == '/del':
