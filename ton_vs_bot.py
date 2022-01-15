@@ -725,7 +725,7 @@ class CommandsInPM:
         )
         query_result = CUR.fetchall()
 
-        response_text = 'list of open users\n'
+        response_text = 'list of open users \({}\)'.format(len(query_result))
 
         for row in query_result:
             volunteer_id = row[0]
@@ -752,6 +752,7 @@ class CommandsInPM:
                 text_time_of_last_message_by_volunteers = 'no answer'
 
             candidate_to_response_text = '\n' \
+                                         '\n' \
                                          '{} {}\n' \
                                          '    {}\n' \
                                          '        {}\n' \
@@ -810,7 +811,7 @@ class CommandsInPM:
         )
         query_result = CUR.fetchall()
 
-        response_text = 'list of taken users by you\n'
+        response_text = 'list of taken users by you \({}\)'.format(len(query_result))
 
         for row in query_result:
             user_id = row[0]
@@ -835,6 +836,7 @@ class CommandsInPM:
                 text_time_of_last_message_by_volunteers = 'no answer'
 
             candidate_to_response_text = '\n' \
+                                         '\n' \
                                          '• {}\n' \
                                          '    {}\n' \
                                          '        {}\n' \

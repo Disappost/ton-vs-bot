@@ -14,20 +14,24 @@ speaking_dict = {
                '\n'
                'Welcome to the TON Volunteer Support bot.\n'
                '\n'
-               'Describe your problem below.\n'
+               'We have a very small team of volunteers, and there are a lot of requests, so we cannot respond quickly or sometimes respond at all. Please try to save volunteers time by trying to solve your problem by yourself.\n'
+               '\n'
+               'Please consider supporting volunteers by sending them some Toncoins. You can send a check in this chat using @CryptoBot or @wallet, or ask for a Toncoin-wallet address for donation.\n'
                '\n'
                'To change speaking language enter /lang.\n'
                '\n'
-               'Please consider supporting volunteers by sending them some Toncoins. You can send a check in the chat using @CryptoBot or ask for a Toncoin-wallet address for donation. Thank you.',
+               'To contact volunteers write your message below.',
         'rus': '👋\n'
                '\n'
                'Приветствуем вас в боте волонтёрской поддержки TON.\n'
                '\n'
-               'Опишите ниже вашу проблему.\n'
+               'У нас очень маленькая комманда волонтёров, а обращений очень много, поэтому мы не всегда можем ответить быстро или вовсе ответить. Пожалуйста постарайтесь сохранить время волонтёров попытаясь решить свою проблему самостоятельно.\n'
+               '\n'
+               'Пожалуйста рассмотрите возможность поддержать волонтёров отправив им немного тонкойнов. Вы можете отправить в этом чате чек используя @CryptoBot или @wallet или попросить адрес TON-кошелька для пожертвования.\n'
                '\n'
                'Чтобы изменить язык общения введите /lang.\n'
                '\n'
-               'Пожалуйста рассмотрите возможность поддержать волонтёров отправив им немного тонкойнов. Вы можете отправить в чате чек используя @CryptoBot или попросить адрес TON-кошелька для пожертвования. Спасибо.\n'
+               'Чтобы связаться с волонтёрами напишите сообщение ниже.'
     },
 
     'lang_command': {
