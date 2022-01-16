@@ -774,7 +774,7 @@ class CommandsInPM:
                 response_text += candidate_to_response_text
 
         if len(query_result) == 0:
-            response_text += '\nempty'
+            response_text += '\n\nempty'
 
         tg_delay(message.from_user.id)
         BOT.send_message(message.from_user.id,
@@ -857,7 +857,7 @@ class CommandsInPM:
                 response_text += candidate_to_response_text
 
         if len(query_result) == 0:
-            response_text += '\nempty'
+            response_text += '\n\nempty'
 
         tg_delay(message.from_user.id)
         BOT.send_message(message.from_user.id,
