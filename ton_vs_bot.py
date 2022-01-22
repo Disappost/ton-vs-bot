@@ -609,7 +609,13 @@ def handle_edited_message(edited_message):
             )
 
         except telegram.error.BadRequest as exc:
-            if str(exc) == 'Message to edit not found':
+            error_0_text = 'Message is not modified: ' \
+                           'specified new message content and reply markup are exactly the same ' \
+                           'as a current content and reply markup of the message'
+            error_1_text = 'Message_id_invalid'
+            error_2_text = 'Message to edit not found'
+
+            if str(exc) in [error_0_text, error_1_text, error_2_text]:
                 pass
             else:
                 raise exc
