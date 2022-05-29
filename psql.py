@@ -73,6 +73,7 @@ with psycopg2.connect(host='localhost',
                         volunteer_id int8 NULL,
                         time_of_last_message_by_user timestamp NULL,
                         time_of_last_message_by_volunteers timestamp NULL,
+                        subject json NULL,
                         CONSTRAINT open_users_pk PRIMARY KEY (user_id)
                     )''')
         cur.execute('CREATE INDEX open_users_volunteer_id_idx '

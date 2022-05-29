@@ -1,4 +1,5 @@
 import datetime
+import json
 import os
 import random
 import re
@@ -10,6 +11,7 @@ import telegram
 
 from constants import *
 from speaking import *
+from subjects import *
 
 SHIT_COUNTER = 0
 CURRENT_UPDATE_ID = 0
@@ -20,11 +22,7 @@ MAP_OF_CHANNEL_MESSAGE_ID_AND_USER_ID = {}
 QUEUE_OF_MESSAGES_DICT = {}
 QUEUE_OF_EDITED_MESSAGES_DICT = {}
 LAST_TIME_OF_MESSAGE_FROM_BOT_TO_USER_DICT = {}
-LAST_TIME_OF_MESSAGE_FROM_BOT_TO_CHAT_DICT = {
-    group_chat_id: 0.0,
-    channel_chat_id: 0.0,
-    log_chat_id: 0.0
-}
+LAST_TIME_OF_MESSAGE_FROM_BOT_TO_CHAT_DICT = {}
 LAST_TIME_OF_GREETING_MESSAGE_DICT = {}
 LAST_TIME_OF_FLOOD_CONTROL_CAUTION_DICT = {}
 separator = '\n\n' + '-' * 64 + '\n\n'
@@ -38,15 +36,11 @@ def gaga():
             main()
             sleep(3)
         except:
-            shit_message = 'SHIT...\n' \
-                           'SHIT_COUNTER: {}\n' \
-                           'time: {}\n' \
-                           '\n' \
-                           '{}'.format(
-                SHIT_COUNTER,
-                datetime.datetime.utcnow(),
-                traceback.format_exc()
-            )
+            shit_message = f'SHIT...\n' \
+                           f'SHIT_COUNTER: {SHIT_COUNTER}\n' \
+                           f'time: {datetime.datetime.utcnow()}\n' \
+                           f'\n' \
+                           f'{traceback.format_exc()}'
             print(shit_message + separator)
             sleep(2 ** SHIT_COUNTER)
             SHIT_COUNTER += 1
@@ -82,10 +76,12 @@ def main():
                     while True:
                         run()
         else:
-            with psycopg2.connect(host='localhost',
-                                  database='ton_vs_bot_db_2',
-                                  user=__import__('gag_secrets').db_user,
-                                  password=__import__('gag_secrets').db_password) as CON:
+            with psycopg2.connect(
+                    host='localhost',
+                    database='ton_vs_bot_db_2',
+                    user=__import__('gag_secrets').db_user,
+                    password=__import__('gag_secrets').db_password
+            ) as CON:
                 with CON.cursor() as CUR:
                     while True:
                         run()
@@ -135,25 +131,43 @@ def run():
 def handle_update(update):
     if update.message:
         message = update.message
+        user = message.from_user
     elif update.edited_message:
         message = update.edited_message
+        user = message.from_user
+    elif update.callback_query:
+        message = update.callback_query.message
+        user = update.callback_query.from_user
+    elif update.channel_post or update.edited_channel_post:
+        if update.channel_post:
+            channel_post = update.channel_post
+        elif update.edited_channel_post:
+            channel_post = update.edited_channel_post
+        else:
+            assert False
+
+        if channel_post.chat.id == channel_chat_id or channel_post.chat.id in subjects_channels.values():
+            pass
+        else:
+            BOT.leave_chat(channel_post.chat.id)
+        return
     else:
         return
 
-    if message.chat.id < 0 and message.chat.id not in LAST_TIME_OF_MESSAGE_FROM_BOT_TO_CHAT_DICT:
-        if not message.left_chat_member:
-            BOT.leave_chat(message.chat.id)
-        return
-
-    if not mute_control(message):
+    if not mute_control(user):
         return
 
     if not flood_control(update):
         return
 
+    if message.chat.id < 0 and message.chat.id not in {channel_chat_id, group_chat_id, log_chat_id}:
+        if not message.left_chat_member:
+            BOT.leave_chat(message.chat.id)
+        return
+
     CUR.execute(
         'SELECT 1 FROM updates WHERE update_id = %s',
-        [update.update_id]
+        (update.update_id,)
     )
     query_result = CUR.fetchone()
 
@@ -165,32 +179,32 @@ def handle_update(update):
         CON.commit()
 
     if update.message:
-        # channel post
         if message.from_user.id == 777000 and message.sender_chat.id == channel_chat_id:
-            channel_post(message)
+            message_from_channel(message)
 
-        # message in group
         elif message.chat.id == group_chat_id:
             message_in_group(message)
 
-        # private message
         elif message.chat.id > 0:
             private_message(message)
 
     elif update.edited_message and update.edited_message.text:
         handle_edited_message(message)
 
+    elif update.callback_query:
+        handle_callback_query(update)
+
     CUR.execute(
         'UPDATE updates SET passed = true WHERE update_id = %s',
-        [update.update_id]
+        (update.update_id,)
     )
     CON.commit()
 
 
-def mute_control(message):
+def mute_control(tg_user):
     CUR.execute(
         'SELECT muted_until FROM muted_users WHERE user_id = %s',
-        [message.from_user.id]
+        (tg_user.id,)
     )
     query_result = CUR.fetchone()
 
@@ -201,11 +215,11 @@ def mute_control(message):
             if datetime.datetime.utcnow() > muted_until:
                 CUR.execute(
                     'DELETE FROM muted_users WHERE user_id = %s',
-                    [message.from_user.id]
+                    (tg_user.id,)
                 )
                 CON.commit()
 
-                update_channel_post(message.from_user)
+                update_channel_posts(tg_user)
 
                 return True
             else:
@@ -270,7 +284,7 @@ def flood_control(update):
 
             CUR.execute(
                 'SELECT group_message_id FROM message_ids WHERE user_id = %s',
-                [message.from_user.id]
+                (message.from_user.id,)
             )
             query_result = CUR.fetchone()
 
@@ -280,11 +294,13 @@ def flood_control(update):
                 message_to_comments = '`❗ Flood control. Caution. {}`'.format(reason)
 
                 tg_delay(group_chat_id)
-                BOT.send_message(group_chat_id,
-                                 message_to_comments,
-                                 reply_to_message_id=group_message_id,
-                                 allow_sending_without_reply=True,
-                                 parse_mode='MarkdownV2')
+                BOT.send_message(
+                    group_chat_id,
+                    message_to_comments,
+                    reply_to_message_id=group_message_id,
+                    allow_sending_without_reply=True,
+                    parse_mode='MarkdownV2'
+                )
 
             speaking('flood_control_caution', message, reply=True, mono=True)
             LAST_TIME_OF_FLOOD_CONTROL_CAUTION_DICT[message.from_user.id] = time()
@@ -300,7 +316,7 @@ def flood_control(update):
     def mute(message, date, reason):
         CUR.execute(
             'INSERT INTO muted_users (user_id) VALUES (%s)',
-            [message.from_user.id]
+            (message.from_user.id,)
         )
         CON.commit()
 
@@ -316,27 +332,22 @@ def flood_control(update):
 
         date = date.replace(tzinfo=None)
 
-        report_message = 'flood control\n' \
-                         'mute user\n' \
-                         '\n' \
-                         'user_id: {}\n' \
-                         'reason: {}\n' \
-                         'message time: {}\n' \
-                         'bot time: {}'.format(
-            message.from_user.id,
-            reason,
-            date,
-            datetime.datetime.utcnow()
-        )
+        report_message = f'flood control\n' \
+                         f'mute user\n' \
+                         f'\n' \
+                         f'user_id: {message.from_user.id}\n' \
+                         f'reason: {reason}\n' \
+                         f'message time: {date}\n' \
+                         f'bot time: {datetime.datetime.utcnow()}'
 
         tg_delay(log_chat_id)
         BOT.send_message(log_chat_id, report_message)
 
-        update_channel_post(message.from_user)
+        update_channel_posts(message.from_user)
 
         CUR.execute(
             'SELECT group_message_id FROM message_ids WHERE user_id = %s',
-            [message.from_user.id]
+            (message.from_user.id,)
         )
         query_result = CUR.fetchone()
 
@@ -346,11 +357,13 @@ def flood_control(update):
             message_to_comments = '`❗ Flood control. {}. User was muted forever`'.format(reason)
 
             tg_delay(group_chat_id)
-            BOT.send_message(group_chat_id,
-                             message_to_comments,
-                             reply_to_message_id=group_message_id,
-                             allow_sending_without_reply=True,
-                             parse_mode='MarkdownV2')
+            BOT.send_message(
+                group_chat_id,
+                message_to_comments,
+                reply_to_message_id=group_message_id,
+                allow_sending_without_reply=True,
+                parse_mode='MarkdownV2'
+            )
 
         speaking('flood_control_mute', message, reply=True, mono=True)
 
@@ -362,8 +375,10 @@ def flood_control(update):
     elif update.edited_message:
         message = update.edited_message
         date = update.edited_message.edit_date
+    elif update.callback_query:
+        return True
     else:
-        raise Exception('?')
+        assert False
 
     if message.from_user.id == 777000:
         return True
@@ -398,7 +413,7 @@ def flood_control(update):
     return True
 
 
-def channel_post(message):
+def message_from_channel(message):
     if message.forward_from_message_id in MAP_OF_CHANNEL_MESSAGE_ID_AND_USER_ID:
         user_id = MAP_OF_CHANNEL_MESSAGE_ID_AND_USER_ID[message.forward_from_message_id]
 
@@ -422,17 +437,21 @@ def channel_post(message):
         for message_from_queue in queue_of_messages_list:
             if message_from_queue.__class__.__name__ == 'NotFirstChannelPostMarker':
                 tg_delay(group_chat_id)
-                BOT.send_message(group_chat_id,
-                                 '`ℹ replied message not found, created new channel post`',
-                                 reply_to_message_id=message.message_id,
-                                 allow_sending_without_reply=True,
-                                 parse_mode='MarkdownV2')
+                BOT.send_message(
+                    group_chat_id,
+                    '`ℹ replied message not found, created new channel post`',
+                    reply_to_message_id=message.message_id,
+                    allow_sending_without_reply=True,
+                    parse_mode='MarkdownV2'
+                )
                 continue
 
             my_forward_message(group_chat_id, message_from_queue, message.message_id)
 
         for edited_message_from_queue in queue_of_edited_messages_list:
             handle_edited_message(edited_message_from_queue)
+
+        update_channel_posts(user_id, {channel_chat_id})
 
 
 def message_in_group(message):
@@ -454,7 +473,7 @@ def message_in_group(message):
 
             CUR.execute(
                 'SELECT user_id FROM message_ids WHERE group_message_id = %s',
-                [message_id]
+                (message_id,)
             )
             query_result = CUR.fetchone()
 
@@ -474,13 +493,13 @@ def message_in_group(message):
                 CON.commit()
 
             else:
-                speaking('channel_post_is_inactive', message, reply=True, mono=True)
+                speaking('channel_post_is_inactive', message, reply=True, mono=True, eng=True)
 
         else:
-            speaking('dont_use_reply_in_comments', message, reply=True, mono=True)
+            speaking('dont_use_reply_in_comments', message, reply=True, mono=True, eng=True)
 
     else:
-        speaking('dont_send_messages_outside_comments', message, reply=True, mono=True)
+        speaking('dont_send_messages_outside_comments', message, reply=True, mono=True, eng=True)
 
 
 def private_message(message):
@@ -498,7 +517,7 @@ def private_message(message):
 
     CUR.execute(
         'SELECT 1 FROM open_users WHERE user_id = %s',
-        [message.from_user.id]
+        (message.from_user.id,)
     )
     query_result = CUR.fetchone()
 
@@ -521,7 +540,7 @@ def private_message(message):
 
         just_opened = True
 
-        update_channel_post(message.from_user)
+        update_channel_posts(message.from_user)
 
         if message.from_user.id in LAST_TIME_OF_GREETING_MESSAGE_DICT:
             time_value = 86400
@@ -531,6 +550,27 @@ def private_message(message):
         else:
             CommandsInPM.start(message)
         LAST_TIME_OF_GREETING_MESSAGE_DICT[message.from_user.id] = time()
+
+        tg_delay(subjects_channels[''])
+        sent_message = BOT.send_message(
+            subjects_channels[''],
+            channel_post_text(message.from_user, mode=1),
+            parse_mode='MarkdownV2'
+        )
+
+        subject_cell = {
+            'menu_message_id': None,
+            'subject_path': '',
+            'posts_in_subject_channels': {
+                subjects_channels['']: sent_message.message_id
+            }
+        }
+
+        CUR.execute(
+            'UPDATE open_users SET subject = %s WHERE user_id = %s',
+            (json.dumps(subject_cell), message.from_user.id)
+        )
+        CON.commit()
 
     # end of user open status
 
@@ -546,7 +586,7 @@ def private_message(message):
 
     CUR.execute(
         'SELECT group_message_id FROM message_ids WHERE user_id = %s',
-        [message.from_user.id]
+        (message.from_user.id,)
     )
     query_result = CUR.fetchone()
 
@@ -555,11 +595,13 @@ def private_message(message):
 
         if just_opened:
             tg_delay(group_chat_id)
-            BOT.send_message(group_chat_id,
-                             '`🙋 user just opened`',
-                             reply_to_message_id=message_id,
-                             allow_sending_without_reply=True,
-                             parse_mode='MarkdownV2')
+            BOT.send_message(
+                group_chat_id,
+                '`🙋 user just opened`',
+                reply_to_message_id=message_id,
+                allow_sending_without_reply=True,
+                parse_mode='MarkdownV2'
+            )
 
         my_forward_message(group_chat_id, message, message_id)
 
@@ -586,10 +628,12 @@ def handle_edited_message(edited_message):
             message_id_1 = query_result[1]
 
             tg_delay(chat_id_1)
-            BOT.edit_message_text(edited_message.text,
-                                  chat_id_1,
-                                  message_id_1,
-                                  entities=edited_message.entities)
+            BOT.edit_message_text(
+                edited_message.text,
+                chat_id_1,
+                message_id_1,
+                entities=edited_message.entities
+            )
 
             if edited_message.chat.id == group_chat_id:
                 user_id = chat_id_1
@@ -615,10 +659,51 @@ def handle_edited_message(edited_message):
             error_1_text = 'Message_id_invalid'
             error_2_text = 'Message to edit not found'
 
-            if str(exc) in [error_0_text, error_1_text, error_2_text]:
+            if str(exc) in {error_0_text, error_1_text, error_2_text}:
                 pass
             else:
                 raise exc
+
+
+def handle_callback_query(update):
+    try:
+        callback_query = update.callback_query
+        data = callback_query.data
+
+        if not any((
+                data.startswith('subject:'),
+                data.startswith('close:'),
+        )):
+            return
+
+        add_to_history(
+            timestamp=datetime.datetime.utcnow(),
+            type='callback_query',
+            user_id=callback_query.from_user.id,
+            volunteer_id=None,
+            column_0=callback_query.id,
+            column_1=callback_query.data,
+            column_2=None
+        )
+
+        if data.startswith('subject:') or data.startswith('close:'):
+            subject_callback(update)
+            return
+
+    except telegram.error.BadRequest as exc:
+        if str(exc) == 'Query is too old and response timeout expired or query id is invalid':
+            report = f'info\n' \
+                     f'\n' \
+                     f'{str(exc)}' \
+                     f'\n' \
+                     f'callback_query.id: {update.callback_query.id}\n'
+
+            print(report + separator)
+
+            tg_delay(log_chat_id)
+            BOT.send_message(log_chat_id, report)
+        else:
+            raise exc
 
 
 def command_in_pm(message):
@@ -641,11 +726,11 @@ def command_in_pm(message):
         CommandsInPM.start(message)
         return
 
-    elif bool(re.match('/lang.*', text)):
-        CommandsInPM.lang(message)
-        return
+    # elif bool(re.match('/lang.*', text)):
+    #     CommandsInPM.lang(message)
+    #     return
 
-    if text in ['/l', '/list', '/t', '/taken']:
+    if text in {'/l', '/list', '/t', '/taken'}:
         volunteers_commands_in_pm(message)
         return
 
@@ -654,11 +739,11 @@ def volunteers_commands_in_pm(message):
     text = message.text
 
     if is_volunteer(message.from_user):
-        if text in ['/l', '/list']:
+        if text in {'/l', '/list'}:
             CommandsInPM.list(message)
             return
 
-        elif text in ['/t', '/taken']:
+        elif text in {'/t', '/taken'}:
             CommandsInPM.taken(message)
             return
 
@@ -666,7 +751,7 @@ def volunteers_commands_in_pm(message):
 class CommandsInPM:
     @staticmethod
     def start(message):
-        speaking('greeting_message', message, cut_big_text=True)
+        speaking('greeting_message', message, markdown=True)
         LAST_TIME_OF_GREETING_MESSAGE_DICT[message.from_user.id] = time()
 
     @staticmethod
@@ -689,11 +774,11 @@ class CommandsInPM:
                 )
                 CON.commit()
 
-                update_channel_post(message.from_user)
+                update_channel_posts(message.from_user)
 
                 speaking('language_was_changed', message, reply=True, mono=True)
 
-                speaking('greeting_message', message, cut_big_text=True)
+                speaking('greeting_message', message, markdown=True)
 
                 LAST_TIME_OF_GREETING_MESSAGE_DICT[message.from_user.id] = time()
 
@@ -705,7 +790,6 @@ class CommandsInPM:
 
     @staticmethod
     def list(message):
-
         CUR.execute(
             '''
                 select
@@ -771,7 +855,7 @@ class CommandsInPM:
                 text_opening_time,
                 text_time_of_last_message_by_user,
                 text_time_of_last_message_by_volunteers,
-                '[link to post]({}/{})'.format(channel_link, channel_message_id)
+                f'[link to post]({channel_link}/{channel_message_id})'
             )
 
             if len(response_text + candidate_to_response_text) > 4096:
@@ -783,11 +867,13 @@ class CommandsInPM:
             response_text += '\n\nempty'
 
         tg_delay(message.from_user.id)
-        BOT.send_message(message.from_user.id,
-                         response_text,
-                         reply_to_message_id=message.message_id,
-                         allow_sending_without_reply=True,
-                         parse_mode='MarkdownV2')
+        BOT.send_message(
+            message.from_user.id,
+            response_text,
+            reply_to_message_id=message.message_id,
+            allow_sending_without_reply=True,
+            parse_mode='MarkdownV2'
+        )
 
     @staticmethod
     def taken(message):
@@ -813,7 +899,7 @@ class CommandsInPM:
                 order by
                     ou.opening_time
             ''',
-            [message.from_user.id]
+            (message.from_user.id,)
         )
         query_result = CUR.fetchall()
 
@@ -866,11 +952,13 @@ class CommandsInPM:
             response_text += '\n\nempty'
 
         tg_delay(message.from_user.id)
-        BOT.send_message(message.from_user.id,
-                         response_text,
-                         reply_to_message_id=message.message_id,
-                         allow_sending_without_reply=True,
-                         parse_mode='MarkdownV2')
+        BOT.send_message(
+            message.from_user.id,
+            response_text,
+            reply_to_message_id=message.message_id,
+            allow_sending_without_reply=True,
+            parse_mode='MarkdownV2'
+        )
 
 
 def DG_commands(message):
@@ -913,7 +1001,7 @@ class DgCommands:
     @staticmethod
     def get_shit_counter():
         tg_delay(DG_user_id)
-        BOT.send_message(DG_user_id, 'SHIT_COUNTER: {}'.format(SHIT_COUNTER))
+        BOT.send_message(DG_user_id, f'SHIT_COUNTER: {SHIT_COUNTER}')
 
     @staticmethod
     def reset_shit_counter():
@@ -932,27 +1020,16 @@ class DgCommands:
         else:
             problem_updates_count = None
 
-        gaga_text = '{}: {}\n' \
-                    '{}: {}\n' \
-                    '\n' \
-                    '{}: {}\n' \
-                    '{}: {}\n' \
-                    '{}: {}\n' \
-                    '\n' \
-                    '{}: {}\n' \
-                    '{}: {}\n' \
-                    '{}: {}\n'.format(
-            'SHIT_COUNTER', SHIT_COUNTER,
-            'problem_updates_count (n - 1)', problem_updates_count,
-
-            'len(MAP_OF_CHANNEL_MESSAGE_ID_AND_USER_ID)', len(MAP_OF_CHANNEL_MESSAGE_ID_AND_USER_ID),
-            'len(QUEUE_OF_MESSAGES_DICT)', len(QUEUE_OF_MESSAGES_DICT),
-            'len(QUEUE_OF_EDITED_MESSAGES_DICT)', len(QUEUE_OF_EDITED_MESSAGES_DICT),
-
-            'len(LAST_TIME_OF_MESSAGE_FROM_BOT_TO_USER_DICT)', len(LAST_TIME_OF_MESSAGE_FROM_BOT_TO_USER_DICT),
-            'len(LAST_TIME_OF_GREETING_MESSAGE_DICT)', len(LAST_TIME_OF_GREETING_MESSAGE_DICT),
-            'len(LAST_TIME_OF_FLOOD_CONTROL_CAUTION_DICT)', len(LAST_TIME_OF_FLOOD_CONTROL_CAUTION_DICT),
-        )
+        gaga_text = f'SHIT_COUNTER: {SHIT_COUNTER}\n' \
+                    f'problem_updates_count (n - 1): {problem_updates_count}\n' \
+                    f'\n' \
+                    f'len(MAP_OF_CHANNEL_MESSAGE_ID_AND_USER_ID): {len(MAP_OF_CHANNEL_MESSAGE_ID_AND_USER_ID)}\n' \
+                    f'len(QUEUE_OF_MESSAGES_DICT): {len(QUEUE_OF_MESSAGES_DICT)}\n' \
+                    f'len(QUEUE_OF_EDITED_MESSAGES_DICT): {len(QUEUE_OF_EDITED_MESSAGES_DICT)}\n' \
+                    f'\n' \
+                    f'len(LAST_TIME_OF_MESSAGE_FROM_BOT_TO_USER_DICT): {len(LAST_TIME_OF_MESSAGE_FROM_BOT_TO_USER_DICT)}\n' \
+                    f'len(LAST_TIME_OF_GREETING_MESSAGE_DICT): {len(LAST_TIME_OF_GREETING_MESSAGE_DICT)}\n' \
+                    f'len(LAST_TIME_OF_FLOOD_CONTROL_CAUTION_DICT): {len(LAST_TIME_OF_FLOOD_CONTROL_CAUTION_DICT)}\n'
 
         tg_delay(DG_user_id)
         BOT.send_message(DG_user_id, gaga_text)
@@ -962,37 +1039,32 @@ class DgCommands:
         def gaga(days):
             dt = datetime.datetime.utcnow() - datetime.timedelta(days=days)
 
-            CUR.execute('SELECT COUNT(*) FROM flood_control WHERE "timestamp" > %s', [dt])
+            CUR.execute('SELECT COUNT(*) FROM flood_control WHERE "timestamp" > %s', (dt,))
             query_result = CUR.fetchone()
             if query_result:
                 flood_control_count = query_result[0]
             else:
                 flood_control_count = None
 
-            CUR.execute('SELECT COUNT(*) FROM history WHERE "timestamp" > %s', [dt])
+            CUR.execute('SELECT COUNT(*) FROM history WHERE "timestamp" > %s', (dt,))
             query_result = CUR.fetchone()
             if query_result:
                 history_count = query_result[0]
             else:
                 history_count = None
 
-            CUR.execute('SELECT COUNT(*) FROM updates WHERE "timestamp" > %s', [dt])
+            CUR.execute('SELECT COUNT(*) FROM updates WHERE "timestamp" > %s', (dt,))
             query_result = CUR.fetchone()
             if query_result:
                 updates_count = query_result[0]
             else:
                 updates_count = None
 
-            report_message = 'days: {}\n' \
-                             '\n' \
-                             'flood_control_count: {}\n' \
-                             'history_count: {}\n' \
-                             'updates_count: {}'.format(
-                days,
-                flood_control_count,
-                history_count,
-                updates_count
-            )
+            report_message = f'days: {days}\n' \
+                             f'\n' \
+                             f'flood_control_count: {flood_control_count}\n' \
+                             f'history_count: {history_count}\n' \
+                             f'updates_count: {updates_count}'
 
             tg_delay(DG_user_id)
             BOT.send_message(DG_user_id, report_message)
@@ -1007,7 +1079,7 @@ class DgCommands:
             number_of_days = int(split[1])
             gaga(number_of_days)
         else:
-            speaking('bad_entered_command', message, reply=True, mono=True)
+            speaking('bad_entered_command', message, reply=True, mono=True, eng=True)
 
 
 def command_in_group(message, user_id):
@@ -1023,23 +1095,24 @@ def command_in_group(message, user_id):
         column_2=message.text
     )
 
-    if text in ['/t', '/take']:
+    if text in {'/t', '/take'}:
         CommandsInGroup.take(message, user_id)
         return
 
-    elif text in ['/d', '/drop']:
+    elif text in {'/d', '/drop'}:
         CommandsInGroup.drop(message, user_id)
         return
 
-    elif text in ['/c', '/close']:
-        CommandsInGroup.close(message, user_id)
+    elif text in {'/c', '/close'}:
+        CommandsInGroup.subject_or_close('close', message, user_id)
         return
 
-    elif text in ['/o', '/open']:
+    elif text in {'/o', '/open'}:
         CommandsInGroup.open(message, user_id)
         return
 
-    elif bool(re.match('/mute.*', text)):
+    # elif bool(re.match('/mute.*', text)):
+    elif text.startswith('/mute'):
         CommandsInGroup.mute(message, user_id)
         return
 
@@ -1047,8 +1120,12 @@ def command_in_group(message, user_id):
         CommandsInGroup.unmute(message, user_id)
         return
 
+    elif text in {'/s', '/subject'}:
+        CommandsInGroup.subject_or_close('subject', message, user_id)
+        return
+
     else:
-        speaking('I_dont_know_this_command', message, reply=True, mono=True)
+        speaking('I_dont_know_this_command', message, reply=True, mono=True, eng=True)
 
 
 class CommandsInGroup:
@@ -1056,7 +1133,7 @@ class CommandsInGroup:
     def take(message, user_id):
         CUR.execute(
             'SELECT volunteer_id FROM open_users WHERE user_id = %s',
-            [user_id]
+            (user_id,)
         )
         query_result = CUR.fetchone()
 
@@ -1080,23 +1157,23 @@ class CommandsInGroup:
                     column_2=None
                 )
 
-                speaking('you_have_taken_this_user', message, reply=True, mono=True)
+                speaking('you_have_taken_this_user', message, reply=True, mono=True, eng=True)
 
-                update_channel_post(user_id)
+                update_channel_posts(user_id)
 
             else:
                 if message.from_user.id == volunteer_id:
-                    speaking('this_user_is_already_taken_by_you', message, reply=True, mono=True)
+                    speaking('this_user_is_already_taken_by_you', message, reply=True, mono=True, eng=True)
                 else:
-                    speaking('this_user_is_already_taken', message, reply=True, mono=True)
+                    speaking('this_user_is_already_taken', message, reply=True, mono=True, eng=True)
         else:
-            speaking('this_user_is_not_open', message, reply=True, mono=True)
+            speaking('this_user_is_not_open', message, reply=True, mono=True, eng=True)
 
     @staticmethod
     def drop(message, user_id):
         CUR.execute(
             'SELECT volunteer_id FROM open_users WHERE user_id = %s',
-            [user_id]
+            (user_id,)
         )
         query_result = CUR.fetchone()
 
@@ -1106,7 +1183,7 @@ class CommandsInGroup:
             if message.from_user.id == volunteer_id:
                 CUR.execute(
                     'UPDATE open_users SET volunteer_id = NULL WHERE user_id = %s',
-                    [user_id]
+                    (user_id,)
                 )
                 CON.commit()
 
@@ -1120,59 +1197,21 @@ class CommandsInGroup:
                     column_2=None
                 )
 
-                speaking('you_have_dropped_this_user', message, reply=True, mono=True)
+                speaking('you_have_dropped_this_user', message, reply=True, mono=True, eng=True)
 
-                update_channel_post(user_id)
-
-            else:
-                speaking('this_user_is_not_taken_by_you', message, reply=True, mono=True)
-
-        else:
-            speaking('this_user_is_not_open', message, reply=True, mono=True)
-
-    @staticmethod
-    def close(message, user_id):
-        CUR.execute(
-            'SELECT volunteer_id FROM open_users WHERE user_id = %s',
-            [user_id]
-        )
-        query_result = CUR.fetchone()
-
-        if query_result:
-            volunteer_id = query_result[0]
-
-            if message.from_user.id == volunteer_id:
-                CUR.execute(
-                    'DELETE FROM open_users WHERE user_id = %s',
-                    [user_id]
-                )
-                CON.commit()
-
-                add_to_history(
-                    timestamp=message.date,
-                    type='bot_action',
-                    user_id=user_id,
-                    volunteer_id=message.from_user.id,
-                    column_0='close_user',
-                    column_1=None,
-                    column_2=None
-                )
-
-                speaking('user_have_been_closed', message, reply=True, mono=True)
-
-                update_channel_post(user_id)
+                update_channel_posts(user_id)
 
             else:
-                speaking('this_user_is_not_taken_by_you', message, reply=True, mono=True)
+                speaking('this_user_is_not_taken_by_you', message, reply=True, mono=True, eng=True)
 
         else:
-            speaking('this_user_is_not_open', message, reply=True, mono=True)
+            speaking('this_user_is_not_open', message, reply=True, mono=True, eng=True)
 
     @staticmethod
     def open(message, user_id):
         CUR.execute(
             'SELECT 1 FROM open_users WHERE user_id = %s',
-            [user_id]
+            (user_id,)
         )
         query_result = CUR.fetchone()
 
@@ -1193,12 +1232,33 @@ class CommandsInGroup:
                 column_2=None
             )
 
-            speaking('user_have_been_opened', message, reply=True, mono=True)
+            speaking('user_have_been_opened', message, reply=True, mono=True, eng=True)
 
-            update_channel_post(user_id)
+            update_channel_posts(user_id)
+
+            tg_delay(subjects_channels[''])
+            sent_message = BOT.send_message(
+                subjects_channels[''],
+                channel_post_text(user_id, mode=1),
+                parse_mode='MarkdownV2'
+            )
+
+            subject_cell = {
+                'menu_message_id': None,
+                'subject_path': '',
+                'posts_in_subject_channels': {
+                    subjects_channels['']: sent_message.message_id
+                }
+            }
+
+            CUR.execute(
+                'UPDATE open_users SET subject = %s WHERE user_id = %s',
+                (json.dumps(subject_cell), user_id)
+            )
+            CON.commit()
 
         else:
-            speaking('user_already_open', message, reply=True, mono=True)
+            speaking('user_already_open', message, reply=True, mono=True, eng=True)
 
     @staticmethod
     def mute(message, user_id):
@@ -1209,14 +1269,14 @@ class CommandsInGroup:
         if len(split) == 1:
             CUR.execute(
                 'SELECT muted_until FROM muted_users WHERE user_id = %s',
-                [user_id]
+                (user_id,)
             )
             query_result = CUR.fetchone()
 
             if not query_result:
                 CUR.execute(
                     'INSERT INTO muted_users (user_id) VALUES (%s)',
-                    [user_id]
+                    (user_id,)
                 )
                 CON.commit()
 
@@ -1230,17 +1290,18 @@ class CommandsInGroup:
                     column_2=None
                 )
 
-                speaking('user_have_been_muted_forever', message, reply=True, mono=True)
+                speaking('user_have_been_muted_forever', message, reply=True, mono=True, eng=True)
 
-                update_channel_post(user_id)
+                update_channel_posts(user_id)
 
             else:
                 muted_until = query_result[0]
 
                 if muted_until:
-                    speaking('user_already_muted_until', message, reply=True, mono=True, add_info=str(muted_until))
+                    speaking('user_already_muted_until', message, reply=True, mono=True, add_info=str(muted_until),
+                             eng=True)
                 else:
-                    speaking('user_already_muted_forever', message, reply=True, mono=True)
+                    speaking('user_already_muted_forever', message, reply=True, mono=True, eng=True)
 
         elif len(split) == 2 and split[1].isdigit():
             mute_value = int(split[1])
@@ -1248,7 +1309,7 @@ class CommandsInGroup:
             if 1 <= mute_value <= 365:
                 CUR.execute(
                     'SELECT muted_until FROM muted_users WHERE user_id = %s',
-                    [user_id]
+                    (user_id,)
                 )
                 query_result = CUR.fetchone()
 
@@ -1262,9 +1323,9 @@ class CommandsInGroup:
                     CON.commit()
 
                     speaking('user_have_been_muted_until', message, reply=True, mono=True,
-                             add_info=str(until_datetime))
+                             add_info=str(until_datetime), eng=True)
 
-                    update_channel_post(user_id)
+                    update_channel_posts(user_id)
 
                     add_to_history(
                         timestamp=message.date,
@@ -1281,28 +1342,28 @@ class CommandsInGroup:
 
                     if muted_until:
                         speaking('user_already_muted_until', message, reply=True, mono=True,
-                                 add_info=str(muted_until))
+                                 add_info=str(muted_until), eng=True)
                     else:
-                        speaking('user_already_muted_forever', message, reply=True, mono=True)
+                        speaking('user_already_muted_forever', message, reply=True, mono=True, eng=True)
 
             else:
-                speaking('mute_value_must_be_in_range', message, reply=True, mono=True)
+                speaking('mute_value_must_be_in_range', message, reply=True, mono=True, eng=True)
 
         else:
-            speaking('bad_entered_command', message, reply=True, mono=True)
+            speaking('bad_entered_command', message, reply=True, mono=True, eng=True)
 
     @staticmethod
     def unmute(message, user_id):
         CUR.execute(
             'SELECT 1 FROM muted_users WHERE user_id = %s',
-            [user_id]
+            (user_id,)
         )
         query_result = CUR.fetchone()
 
         if query_result:
             CUR.execute(
                 'DELETE FROM muted_users WHERE user_id = %s',
-                [user_id]
+                (user_id,)
             )
             CON.commit()
 
@@ -1316,12 +1377,12 @@ class CommandsInGroup:
                 column_2=None
             )
 
-            speaking('user_have_been_unmuted', message, reply=True, mono=True)
+            speaking('user_have_been_unmuted', message, reply=True, mono=True, eng=True)
 
-            update_channel_post(user_id)
+            update_channel_posts(user_id)
 
         else:
-            speaking('user_not_muted', message, reply=True, mono=True)
+            speaking('user_not_muted', message, reply=True, mono=True, eng=True)
 
     @staticmethod
     def delete_message(message):
@@ -1342,7 +1403,7 @@ class CommandsInGroup:
                     tg_delay(chat_id)
                     BOT.delete_message(chat_id, message_id)
 
-                    speaking('message_deleted', message, reply=True, mono=True)
+                    speaking('message_deleted', message, reply=True, mono=True, eng=True)
 
                     # add to history
 
@@ -1397,19 +1458,423 @@ class CommandsInGroup:
 
                 except telegram.error.BadRequest as exc:
                     reason = '\n\n' + str(exc)
-                    speaking('message_not_deleted_because', message, reply=True, mono=True, add_info=reason)
+                    speaking('message_not_deleted_because', message, reply=True, mono=True, add_info=reason, eng=True)
 
             else:
-                speaking('message_not_deleted_because_not_found_in_bot_db', message, reply=True, mono=True)
+                speaking('message_not_deleted_because_not_found_in_bot_db', message, reply=True, mono=True, eng=True)
 
         else:
-            speaking('use_reply_with_del_command', message, reply=True, mono=True)
+            speaking('use_reply_with_del_command', message, reply=True, mono=True, eng=True)
+
+    @staticmethod
+    def subject_or_close(mode, message, user_id):
+        assert mode in {'subject', 'close'}
+
+        CUR.execute(
+            'SELECT subject FROM open_users WHERE user_id = %s',
+            (user_id,)
+        )
+        query_result = CUR.fetchone()
+
+        if query_result:
+            subject_cell = query_result[0]
+
+            if subject_cell:
+                subject_path = subject_cell['subject_path']
+                if subject_path:
+                    subject_list = subject_path.split('/')
+                else:
+                    subject_list = []
+                posts_in_subject_channels = subject_cell['posts_in_subject_channels']
+            else:
+                subject_path = ''
+                subject_list = []
+                posts_in_subject_channels = {}
+
+            subject_dir_list = get_subject_dir_list(subject_path)
+
+            if subject_dir_list is False:
+                report = f'info\n' \
+                         f'\n' \
+                         f'invalid subject_path\n' \
+                         f'\n' \
+                         f'subject_path: "{subject_path}"\n' \
+                         f'\n' \
+                         f'{datetime.datetime.utcnow()}\n'
+
+                print(report + separator)
+
+                tg_delay(log_chat_id)
+                BOT.send_message(log_chat_id, report)
+
+                return
+
+            text = ''
+            for i in subject_list:
+                text += f'> {i}\n'
+            if not text:
+                text = 'empty'
+
+            reply_markup = get_subject_reply_markup(mode, subject_path, subject_dir_list, user_id)
+
+            tg_delay(group_chat_id)
+            sent_message = BOT.send_message(
+                group_chat_id,
+                text,
+                reply_to_message_id=message.message_id,
+                reply_markup=reply_markup
+            )
+
+            new_subject_cell = {
+                'menu_message_id': sent_message.message_id,
+                'subject_path': subject_path,
+                'posts_in_subject_channels': posts_in_subject_channels
+            }
+
+            CUR.execute(
+                'UPDATE open_users SET subject = %s WHERE user_id = %s',
+                (json.dumps(new_subject_cell), user_id)
+            )
+            CON.commit()
+
+        else:
+            speaking('this_user_is_not_open', message, reply=True, mono=True, eng=True)
 
 
-def channel_post_text(tg_user):
+def subject_callback(update):
+    callback_query = update.callback_query
+    data = callback_query.data
+
+    if callback_query.message.chat.id != group_chat_id:
+        return
+
+    splited = data.split(':', maxsplit=2)
+
+    if len(splited) != 3:
+        return
+
+    mode = splited[0]
+    user_id = int(splited[1])
+    third_part = splited[2]
+
+    if mode not in {'subject', 'close'}:
+        return
+
+    if callback_query.from_user.id != callback_query.message.reply_to_message.from_user.id:
+        BOT.answer_callback_query(
+            callback_query.id,
+            'This message is not for you. Use /command.',
+            show_alert=True
+        )
+        return
+
+    CUR.execute(
+        'SELECT subject FROM open_users WHERE user_id = %s',
+        (user_id,)
+    )
+    query_result = CUR.fetchone()
+
+    if query_result:
+        subject_cell = query_result[0]
+
+        if not subject_cell:
+            BOT.answer_callback_query(
+                callback_query.id,
+                'This message is inactive. Use appropriate /command.',
+                show_alert=True
+            )
+            return
+
+        menu_message_id = subject_cell['menu_message_id']
+        if callback_query.message.message_id != menu_message_id:
+            BOT.answer_callback_query(
+                callback_query.id,
+                'This message is inactive. Find the newest message bellow or use appropriate /command.',
+                show_alert=True
+            )
+            return
+
+        subject_path = subject_cell['subject_path']
+        if subject_path:
+            old_subject_list = subject_path.split('/')
+        else:
+            old_subject_list = []
+
+        if third_part == 'ok':
+            if mode == 'subject':
+                text = ''
+                for i in old_subject_list:
+                    text += f'> {i}\n'
+                if not text:
+                    text = 'empty\n'
+                text += '\n✅'
+
+                tg_delay(callback_query.message.chat.id)
+                BOT.edit_message_text(
+                    text,
+                    callback_query.message.chat.id,
+                    callback_query.message.message_id
+                )
+            elif mode == 'close':
+                close_user(callback_query, user_id, subject_path)
+            return
+        elif third_part == '❌':
+            tg_delay(callback_query.message.chat.id)
+            BOT.delete_message(
+                callback_query.message.chat.id,
+                callback_query.message.message_id
+            )
+            return
+        elif third_part == '⬅':
+            new_subject_list = old_subject_list[0:-1]
+        else:
+            new_subject_list = old_subject_list.copy()
+            new_subject_list.append(third_part)
+
+        new_subject_path = '/'.join(new_subject_list)
+
+        subject_dir_list = get_subject_dir_list(new_subject_path)
+
+        if subject_dir_list is False:
+            report = f'info\n' \
+                     f'\n' \
+                     f'invalid new_subject_path\n' \
+                     f'\n' \
+                     f'new_subject_path: "{new_subject_path}"\n' \
+                     f'\n' \
+                     f'callback_query.id: {callback_query.id}\n' \
+                     f'\n' \
+                     f'{datetime.datetime.utcnow()}\n'
+
+            print(report + separator)
+
+            tg_delay(log_chat_id)
+            BOT.send_message(log_chat_id, report)
+
+            return
+
+        text = ''
+        for i in new_subject_list:
+            text += f'> {i}\n'
+        if not text:
+            text = 'empty'
+
+        reply_markup = get_subject_reply_markup(mode, new_subject_path, subject_dir_list, user_id)
+
+        tg_delay(callback_query.message.chat.id)
+        BOT.edit_message_text(
+            text,
+            callback_query.message.chat.id,
+            callback_query.message.message_id,
+            reply_markup=reply_markup
+        )
+
+        new_subject_channels_set = set()
+        for key in subjects_channels:
+            if new_subject_path.startswith(key):
+                new_subject_channels_set.add(subjects_channels[key])
+
+        old_posts_in_subject_channels = {}
+        for key in subject_cell['posts_in_subject_channels']:
+            old_posts_in_subject_channels[int(key)] = subject_cell['posts_in_subject_channels'][key]
+
+        old_subject_channels_set = set(old_posts_in_subject_channels.keys())
+
+        new_subject_cell = {
+            'menu_message_id': menu_message_id,
+            'subject_path': new_subject_path,
+            'posts_in_subject_channels': subject_cell['posts_in_subject_channels']
+        }
+
+        CUR.execute(
+            'UPDATE open_users SET subject = %s WHERE user_id = %s',
+            (json.dumps(new_subject_cell), user_id)
+        )
+        CON.commit()
+
+        text = channel_post_text(user_id, mode=1)
+
+        new_channel_posts_dict = {}
+        ignore_update_chats_set = set()
+        for chat_id in new_subject_channels_set - old_subject_channels_set:
+            ignore_update_chats_set.add(chat_id)
+
+            tg_delay(chat_id)
+            sent_message = BOT.send_message(
+                chat_id,
+                text,
+                parse_mode='MarkdownV2'
+            )
+
+            new_channel_posts_dict[chat_id] = sent_message.message_id
+
+        for chat_id in old_subject_channels_set - new_subject_channels_set:
+            tg_delay(chat_id)
+            BOT.delete_message(
+                chat_id,
+                old_posts_in_subject_channels[chat_id],
+            )
+
+        actual_posts_in_subject_channels = {}
+        for current_dict in old_posts_in_subject_channels, new_channel_posts_dict:
+            for chat_id in current_dict:
+                if chat_id in new_subject_channels_set:
+                    actual_posts_in_subject_channels[chat_id] = current_dict[chat_id]
+
+        new_subject_cell = {
+            'menu_message_id': menu_message_id,
+            'subject_path': new_subject_path,
+            'posts_in_subject_channels': actual_posts_in_subject_channels
+        }
+
+        CUR.execute(
+            'UPDATE open_users SET subject = %s WHERE user_id = %s',
+            (json.dumps(new_subject_cell), user_id)
+        )
+        CON.commit()
+
+        update_channel_posts(user_id, ignore_update_chats_set)
+
+        BOT.answer_callback_query(callback_query.id)
+
+    else:
+        BOT.answer_callback_query(
+            callback_query.id,
+            'This user is not open.',
+            show_alert=True
+        )
+
+
+def get_subject_dir_list(subject_path: str):
+    if subject_path:
+        subject_path = subject_path.strip()
+        subject_list = subject_path.split('/')
+
+        gag = subjects_dict
+        for item in subject_list:
+            if isinstance(gag, dict):
+                if item in gag:
+                    gag = gag[item]
+                else:
+                    return False
+            elif gag is None:
+                return False
+
+        if isinstance(gag, dict):
+            return list(gag.keys())
+        elif gag is None:
+            return []
+
+    else:
+        return list(subjects_dict.keys())
+
+
+def get_subject_reply_markup(mode, subject_path, subject_dir_list, user_id):
+    if mode == 'subject':
+        ok_emoji = '☑️'
+    elif mode == 'close':
+        ok_emoji = '✅'
+    else:
+        assert False
+
+    first_buttons_line = [
+        telegram.InlineKeyboardButton(ok_emoji, callback_data=f'{mode}:{user_id}:ok')
+    ]
+
+    if mode == 'close':
+        first_buttons_line.insert(
+            0,
+            telegram.InlineKeyboardButton('❌', callback_data=f'{mode}:{user_id}:❌')
+        )
+
+    if subject_path:
+        first_buttons_line.insert(
+            0,
+            telegram.InlineKeyboardButton('⬅️', callback_data=f'{mode}:{user_id}:⬅')
+        )
+
+    keyboard = [first_buttons_line] + [
+        [telegram.InlineKeyboardButton(i, callback_data=f'{mode}:{user_id}:{i}')]
+        for i in subject_dir_list
+    ]
+
+    reply_markup = telegram.InlineKeyboardMarkup(keyboard)
+
+    return reply_markup
+
+
+def close_user(callback_query, user_id, subject_path):
+    CUR.execute(
+        'SELECT subject FROM open_users WHERE user_id = %s',
+        (user_id,)
+    )
+    query_result = CUR.fetchone()
+
+    if query_result:
+        subject_cell = query_result[0]
+
+        CUR.execute(
+            'DELETE FROM open_users WHERE user_id = %s',
+            (user_id,)
+        )
+        CON.commit()
+
+        if not subject_path:
+            subject_path = None
+
+        add_to_history(
+            timestamp=datetime.datetime.utcnow(),
+            type='bot_action',
+            user_id=user_id,
+            volunteer_id=callback_query.from_user.id,
+            column_0='close_user',
+            column_1=subject_path,
+            column_2=None
+        )
+
+        if not subject_path:
+            subject_path = 'empty'
+
+        volunteer_info = get_tg_user_info(callback_query.from_user)
+        text = f'✅ `user was closed`\n' \
+               f'by {escape_markdown(volunteer_info)}\n' \
+               f'subject: {escape_markdown(subject_path)}'
+
+        tg_delay(callback_query.message.chat.id)
+        BOT.edit_message_text(
+            text,
+            callback_query.message.chat.id,
+            callback_query.message.message_id,
+            parse_mode='MarkdownV2'
+        )
+
+        for chat_id in subject_cell['posts_in_subject_channels']:
+            tg_delay(int(chat_id))
+            BOT.delete_message(
+                int(chat_id),
+                subject_cell['posts_in_subject_channels'][chat_id],
+            )
+
+        update_channel_posts(user_id)
+
+    else:
+        BOT.answer_callback_query(
+            callback_query.id,
+            'This user is not open.',
+            show_alert=True
+        )
+
+
+def channel_post_text(tg_user_or_user_id, mode=0):
+    if isinstance(tg_user_or_user_id, telegram.user.User):
+        tg_user = tg_user_or_user_id
+    else:
+        user_id = tg_user_or_user_id
+        tg_user = BOT.get_chat_member(user_id, user_id).user  # if bot is blocked by user - all fine
+
     CUR.execute(
         'SELECT muted_until FROM muted_users WHERE user_id = %s',
-        [tg_user.id]
+        (tg_user.id,)
     )
     query_result = CUR.fetchone()
 
@@ -1421,45 +1886,61 @@ def channel_post_text(tg_user):
         muted_until = None
 
     CUR.execute(
-        'SELECT opening_time, volunteer_id FROM open_users WHERE user_id = %s',
-        [tg_user.id]
+        'SELECT opening_time, volunteer_id, subject FROM open_users WHERE user_id = %s',
+        (tg_user.id,)
     )
     query_result = CUR.fetchone()
 
     if query_result:
-        opening_time = query_result[0]
-        volunteer_id = query_result[1]
+        open = True
+        opening_time, volunteer_id, subject_cell = query_result
 
         if volunteer_id:
-            status_line = '🟡 open {}, taken by {}'.format(opening_time, get_tg_user_info(volunteer_id))
+            status_line = f'🟡 open {opening_time}, taken by {get_tg_user_info(volunteer_id)}'
         else:
-            status_line = '🔴 open {}, not taken'.format(opening_time)
+            status_line = f'🔴 open {opening_time}, not taken'
+
+        if subject_cell:
+            subject_path = subject_cell['subject_path']
+            if subject_path:
+                subject = subject_path
+            else:
+                subject = 'empty'
+        else:
+            subject = 'empty'
     else:
+        open = False
+        subject = ''
         status_line = '🟢 closed'
 
     language = get_user_language(tg_user)
 
-    text = '{}\n' \
-           '\n' \
-           '{}\n' \
-           '\n' \
-           'lang: {}\n' \
-           '\n' \
-           '{}'.format(
-        status_line,
-        get_tg_user_info(tg_user),
-        language,
-        '#user_{}'.format(tg_user.id)
-    )
-
+    text = ''
     if muted:
         muted_text = '🚫 user muted'
         if muted_until:
-            muted_text += ', until {}'.format(muted_until)
+            muted_text += f', until {escape_markdown(str(muted_until))}'
         else:
             muted_text += ', forever'
+        text += muted_text + '\n\n'
+    text += escape_markdown(status_line) + '\n\n'
+    if open:
+        text += f'subject: {escape_markdown(subject)}' + '\n\n'
+    text += escape_markdown(get_tg_user_info(tg_user)) + '\n\n'
+    text += f'lang: {language}' + '\n\n'
 
-        text = muted_text + '\n\n' + text
+    if mode:
+        CUR.execute(
+            'SELECT channel_message_id FROM message_ids WHERE user_id = %s',
+            (tg_user.id,)
+        )
+        query_result = CUR.fetchone()
+
+        if query_result:
+            channel_message_id = query_result[0]
+            text += f'[link to post]({channel_link}/{channel_message_id})'
+    else:
+        text += escape_markdown(f'#user_{tg_user.id}')
 
     return text
 
@@ -1467,7 +1948,7 @@ def channel_post_text(tg_user):
 def create_channel_post(message, not_first=False):
     CUR.execute(
         'SELECT 1 FROM languages_of_users WHERE user_id = %s',
-        [message.from_user.id]
+        (message.from_user.id,)
     )
     query_result = CUR.fetchone()
 
@@ -1493,12 +1974,16 @@ def create_channel_post(message, not_first=False):
 
     CUR.execute(
         'DELETE FROM message_ids WHERE user_id = %s',
-        [message.from_user.id]
+        (message.from_user.id,)
     )
     CON.commit()
 
     tg_delay(channel_chat_id)
-    sent_message = BOT.send_message(channel_chat_id, channel_post_text(message.from_user))
+    sent_message = BOT.send_message(
+        channel_chat_id,
+        channel_post_text(message.from_user),
+        parse_mode='MarkdownV2'
+    )
 
     MAP_OF_CHANNEL_MESSAGE_ID_AND_USER_ID[sent_message.message_id] = message.from_user.id
     QUEUE_OF_MESSAGES_DICT[message.from_user.id] = [message]
@@ -1512,7 +1997,42 @@ def create_channel_post(message, not_first=False):
         QUEUE_OF_MESSAGES_DICT[message.from_user.id].insert(0, marker)
 
 
-def update_channel_post(tg_user_or_user_id):
+def update_channel_posts(tg_user_or_user_id, ignore_update_chats_set=None):
+    if ignore_update_chats_set is None:
+        ignore_update_chats_set = set()
+
+    def try_edit_message(chat_id, message_id, text):
+        try:
+            tg_delay(chat_id)
+            BOT.edit_message_text(
+                text,
+                chat_id,
+                message_id,
+                parse_mode='MarkdownV2'
+            )
+
+        except telegram.error.BadRequest as exc:
+            error_0_text = 'Message is not modified: ' \
+                           'specified new message content and reply markup are exactly the same ' \
+                           'as a current content and reply markup of the message'
+            error_1_text = 'Message_id_invalid'
+            error_2_text = 'Message to edit not found'
+
+            if str(exc) in {error_0_text, error_1_text, error_2_text}:
+                report = f'update_channel_post\n' \
+                         f'post_id: {channel_message_id}\n' \
+                         f'\n' \
+                         f'{str(exc)}\n' \
+                         f'\n' \
+                         f'{datetime.datetime.utcnow()}'
+
+                print(report + separator)
+
+                tg_delay(log_chat_id)
+                BOT.send_message(log_chat_id, report)
+            else:
+                raise exc
+
     if isinstance(tg_user_or_user_id, telegram.user.User):
         tg_user = tg_user_or_user_id
         user_id = tg_user.id
@@ -1522,7 +2042,7 @@ def update_channel_post(tg_user_or_user_id):
 
     CUR.execute(
         'SELECT channel_message_id FROM message_ids WHERE user_id = %s',
-        [user_id]
+        (user_id,)
     )
     query_result = CUR.fetchone()
 
@@ -1531,46 +2051,33 @@ def update_channel_post(tg_user_or_user_id):
 
         text = channel_post_text(tg_user)
 
-        try:
-            tg_delay(channel_chat_id)
-            BOT.edit_message_text(text, channel_chat_id, channel_message_id)
+        if channel_chat_id not in ignore_update_chats_set:
+            try_edit_message(channel_chat_id, channel_message_id, text)
 
-        except telegram.error.BadRequest as exc:
-            error_0_text = 'Message is not modified: ' \
-                           'specified new message content and reply markup are exactly the same ' \
-                           'as a current content and reply markup of the message'
-            error_1_text = 'Message_id_invalid'
-            error_2_text = 'Message to edit not found'
+        CUR.execute(
+            'SELECT subject FROM open_users WHERE user_id = %s',
+            (user_id,)
+        )
+        query_result = CUR.fetchone()
 
-            if str(exc) in [error_0_text, error_1_text, error_2_text]:
-                report_text = 'update_channel_post\n' \
-                              'post_id: {}\n' \
-                              '\n' \
-                              '{}\n' \
-                              '\n' \
-                              '{}'.format(channel_message_id, str(exc), datetime.datetime.utcnow())
+        if query_result:
+            subject_cell = query_result[0]
 
-                print(report_text + separator)
+            if subject_cell:
+                messages = {}
+                for key in subject_cell['posts_in_subject_channels']:
+                    messages[int(key)] = subject_cell['posts_in_subject_channels'][key]
 
-                tg_delay(log_chat_id)
-                BOT.send_message(log_chat_id, report_text)
+                text = channel_post_text(tg_user, mode=1)
 
-            else:
-                raise exc
+                for chat_id in messages:
+                    if chat_id not in ignore_update_chats_set:
+                        try_edit_message(chat_id, messages[chat_id], text)
 
 
 def tg_delay(target_chat_id):
     if tg_delays:
-        if target_chat_id in LAST_TIME_OF_MESSAGE_FROM_BOT_TO_CHAT_DICT:
-            delay_value = 3
-
-            time_difference = time() - LAST_TIME_OF_MESSAGE_FROM_BOT_TO_CHAT_DICT[target_chat_id]
-            if time_difference < delay_value:
-                sleep(delay_value - time_difference)
-
-            LAST_TIME_OF_MESSAGE_FROM_BOT_TO_CHAT_DICT[target_chat_id] = time()
-
-        elif target_chat_id > 0:
+        if target_chat_id > 0:
             if target_chat_id in LAST_TIME_OF_MESSAGE_FROM_BOT_TO_USER_DICT:
 
                 delay_value = 1
@@ -1580,6 +2087,17 @@ def tg_delay(target_chat_id):
                     sleep(delay_value - time_difference)
 
             LAST_TIME_OF_MESSAGE_FROM_BOT_TO_USER_DICT[target_chat_id] = time()
+
+        elif target_chat_id < 0:
+            if target_chat_id in LAST_TIME_OF_MESSAGE_FROM_BOT_TO_CHAT_DICT:
+
+                delay_value = 3
+
+                time_difference = time() - LAST_TIME_OF_MESSAGE_FROM_BOT_TO_CHAT_DICT[target_chat_id]
+                if time_difference < delay_value:
+                    sleep(delay_value - time_difference)
+
+            LAST_TIME_OF_MESSAGE_FROM_BOT_TO_CHAT_DICT[target_chat_id] = time()
 
 
 def my_forward_message(to_chat, message, reply_to_message_id=None):
@@ -1595,20 +2113,25 @@ def my_forward_message(to_chat, message, reply_to_message_id=None):
             history_column_1 = tg_wallet_bots_dict[message.via_bot.id]
             history_column_2 = message.text
 
-            sent_message = BOT.send_message(to_chat,
-                                            '{}: {}'.format(tg_wallet_bots_dict[message.via_bot.id], message.text),
-                                            reply_to_message_id=reply_to_message_id,
-                                            reply_markup=message.reply_markup)
+            sent_message = BOT.send_message(
+                to_chat,
+                f'{tg_wallet_bots_dict[message.via_bot.id]}: {message.text}',
+                reply_to_message_id=reply_to_message_id,
+                reply_markup=message.reply_markup
+            )
 
         else:
             if message.text:
-                if bool(re.match('test_error.*', message.text)):
+                # if bool(re.match('test_error.*', message.text)):
+                if message.text.startswith('test_error'):
                     test_error(message)
 
-            sent_message = BOT.copy_message(to_chat,
-                                            message.chat.id,
-                                            message.message_id,
-                                            reply_to_message_id=reply_to_message_id)
+            sent_message = BOT.copy_message(
+                to_chat,
+                message.chat.id,
+                message.message_id,
+                reply_to_message_id=reply_to_message_id
+            )
 
             if message.text:
                 history_column_1 = 'text'
@@ -1654,21 +2177,21 @@ def my_forward_message(to_chat, message, reply_to_message_id=None):
         if str(exc) == 'Replied message not found':
             create_channel_post(message, not_first=True)
 
-            report_message = 'replied message not found, created new channel post\n' \
-                             'old group_message_id: {}\n' \
-                             '{}'.format(reply_to_message_id, datetime.datetime.utcnow())
+            report = f'replied message not found, created new channel post\n' \
+                     f'old group_message_id: {reply_to_message_id}\n' \
+                     f'{datetime.datetime.utcnow()}'
 
-            print(report_message + separator)
+            print(report + separator)
 
             tg_delay(log_chat_id)
-            BOT.send_message(log_chat_id, report_message)
+            BOT.send_message(log_chat_id, report)
 
         else:
             raise exc
 
     except telegram.error.Unauthorized as exc:
         if str(exc) == 'Forbidden: bot was blocked by the user':
-            speaking('bot_was_blocked_by_the_user', message, reply=True, mono=True)
+            speaking('bot_was_blocked_by_the_user', message, reply=True, mono=True, eng=True)
         else:
             raise exc
 
@@ -1679,7 +2202,7 @@ def my_forward_message(to_chat, message, reply_to_message_id=None):
         user_id = to_chat
         volunteer_id = message.from_user.id
     else:
-        raise Exception('?')
+        assert False
 
     if sent_message:
         CUR.execute(
@@ -1714,20 +2237,24 @@ def my_forward_message(to_chat, message, reply_to_message_id=None):
     )
 
 
-def speaking(speaking_keyword, message, reply=False, mono=False, cut_big_text=False, add_info=None):
-    # ! don't use mono=True and cut_bit_text=True together
+def speaking(speaking_keyword, message, reply=False, mono=False, cut_big_text=False, add_info=None, eng=False,
+             markdown=False):
+    # !
+    # don't use mono=True and cut_bit_text=True together
+    # don't use markdown=True and cut_bit_text=True together
 
-    user_language = get_user_language(message)
+    if eng:
+        user_language = 'eng'
+    else:
+        user_language = get_user_language(message)
 
     if speaking_keyword in speaking_dict:
         dict_of_phrase = speaking_dict[speaking_keyword]
 
         if user_language in dict_of_phrase:
             answer = dict_of_phrase[user_language]
-
         else:
             answer = dict_of_phrase.get('eng', None)
-
     else:
         answer = None
 
@@ -1740,40 +2267,42 @@ def speaking(speaking_keyword, message, reply=False, mono=False, cut_big_text=Fa
         if add_info:
             answer = answer + add_info
 
-        if mono:
-            answer = '`{}`'.format(answer)
+        if markdown:
             parse_mode = 'MarkdownV2'
         else:
             parse_mode = None
+
+            if mono:
+                answer = f'`{answer}`'
+                parse_mode = 'MarkdownV2'
+            else:
+                parse_mode = None
 
         if cut_big_text:
             answer = truncate_big_text(0, answer)
 
         tg_delay(message.chat.id)
-        BOT.send_message(message.chat.id,
-                         answer,
-                         reply_to_message_id=reply_to_message_id,
-                         allow_sending_without_reply=True,
-                         parse_mode=parse_mode)
-
-    else:
-        report_message = 'no answer in speaking()\n' \
-                         '\n' \
-                         'answer_keyword: "{}"\n' \
-                         'user_language: {}\n' \
-                         'user_id: {}\n' \
-                         '\n' \
-                         'message time: {}\n' \
-                         'bot time: {}'.format(
-            speaking_keyword,
-            user_language,
-            message.from_user.id,
-            message.date,
-            datetime.datetime.utcnow()
+        BOT.send_message(
+            message.chat.id,
+            answer,
+            reply_to_message_id=reply_to_message_id,
+            allow_sending_without_reply=True,
+            parse_mode=parse_mode,
+            disable_web_page_preview=True
         )
 
+    else:
+        report = f'no answer in speaking()\n' \
+                 f'\n' \
+                 f'answer_keyword: "{speaking_keyword}"\n' \
+                 f'user_language: {user_language}\n' \
+                 f'user_id: {message.from_user.id}\n' \
+                 f'\n' \
+                 f'message time: {message.date}\n' \
+                 f'bot time: {datetime.datetime.utcnow()}'
+
         tg_delay(log_chat_id)
-        BOT.send_message(log_chat_id, report_message)
+        BOT.send_message(log_chat_id, report)
 
 
 def get_tg_user_info(tg_user_or_user_id):
@@ -1809,7 +2338,7 @@ def get_user_language(tg_message_or_user):
 
     CUR.execute(
         'SELECT language FROM languages_of_users WHERE user_id = %s',
-        [tg_user.id]
+        (tg_user.id,)
     )
     query_result = CUR.fetchone()
 
@@ -1848,13 +2377,13 @@ def is_volunteer(tg_user):
         else:
             raise exc
 
-    if status in ['creator', 'administrator', 'member']:
+    if status in {'creator', 'administrator', 'member'}:
         return True
     else:
         return False
 
 
-def truncate_big_text(mode, text):
+def truncate_big_text(mode, text: str):
     max_allowed_text_length = 4096
 
     if len(text) > max_allowed_text_length:
@@ -1868,13 +2397,13 @@ def truncate_big_text(mode, text):
     return text
 
 
-def escape_markdown(str):
-    characters_list = ['\\', '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+def escape_markdown(string: str):
+    characters_tuple = ('\\', '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!')
 
-    for char in characters_list:
-        str = str.replace(char, '\\' + char)
+    for char in characters_tuple:
+        string = string.replace(char, '\\' + char)
 
-    return str
+    return string
 
 
 def add_to_history(**kwargs):
@@ -1991,7 +2520,7 @@ class Cleaning:
 
         CUR.execute(
             'DELETE FROM for_updating_messages WHERE "timestamp" < %s',
-            [dt]
+            (dt,)
         )
         CON.commit()
 
@@ -2011,7 +2540,7 @@ class Cleaning:
 
         CUR.execute(
             'DELETE FROM updates WHERE "timestamp" < %s',
-            [dt]
+            (dt,)
         )
         CON.commit()
 
@@ -2031,7 +2560,7 @@ class Cleaning:
 
         CUR.execute(
             'DELETE FROM flood_control WHERE "timestamp" < %s',
-            [dt]
+            (dt,)
         )
         CON.commit()
 
@@ -2062,7 +2591,8 @@ def test_error(message):
     if not message.text:
         return
 
-    if not bool(re.match('test_error.*', message.text)):
+    # if not bool(re.match('test_error.*', message.text)):
+    if not message.text.startswith('test_error'):
         return
 
     if not is_volunteer(message.from_user):
@@ -2089,34 +2619,30 @@ def test_error(message):
 
 
 def minor_error(exc):
-    message = 'minor error\n' \
-              '{}: {}\n' \
-              '{}'.format(
-        exc.__class__.__name__,
-        str(exc),
-        datetime.datetime.utcnow()
-    )
+    message = f'minor error\n' \
+              f'{exc.__class__.__name__}: {str(exc)}\n' \
+              f'{datetime.datetime.utcnow()}'
 
     print(message + separator)
 
     tg_delay(log_chat_id)
     BOT.send_message(log_chat_id, message, disable_notification=True)
 
-    sleep(3)
+    sleep(10)
 
 
 def my_traceback(level, additional_information=None, update=None):
     global SHIT_COUNTER
 
-    info_message = 'level {}'.format(level)
+    info_message = f'level {level}'
 
     if SHIT_COUNTER:
-        info_message += '\n\nSHIT_COUNTER: {}'.format(SHIT_COUNTER)
+        info_message += f'\n\nSHIT_COUNTER: {SHIT_COUNTER}'
 
-    info_message += '\n\n{}'.format(datetime.datetime.utcnow())
+    info_message += f'\n\n{datetime.datetime.utcnow()}'
 
     if additional_information:
-        info_message += '\n\n{}'.format(additional_information)
+        info_message += f'\n\n{additional_information}'
 
     traceback_message = traceback.format_exc()
 
@@ -2132,10 +2658,10 @@ def my_traceback(level, additional_information=None, update=None):
         if update and update.message:
             problem_message = 'problem message\n\n'
 
-            problem_message += 'chat_id: {}\n'.format(update.message.chat.id)
-            problem_message += 'message_id: {}\n'.format(update.message.message_id)
+            problem_message += f'chat_id: {update.message.chat.id}\n'
+            problem_message += f'message_id: {update.message.message_id}\n'
             if update.message.from_user:
-                problem_message += 'user_id: {}\n'.format(update.message.from_user.id)
+                problem_message += f'user_id: {update.message.from_user.id}\n'
 
             speaking('mistake', update.message, reply=True, mono=True)
 
@@ -2146,7 +2672,7 @@ def my_traceback(level, additional_information=None, update=None):
             BOT.forward_message(log_chat_id, update.message.chat.id, update.message.message_id)
 
     except:
-        exception_in_my_traceback_message = '!!! exception in handling my_traceback))\n\n'
+        exception_in_my_traceback_message = '! exception in handling my_traceback))\n\n'
         exception_in_my_traceback_message += traceback.format_exc()
 
         print(exception_in_my_traceback_message + separator)
