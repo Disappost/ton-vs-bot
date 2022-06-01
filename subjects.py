@@ -1,4 +1,5 @@
 subjects_dict = {
+    'airdrop': None,
     'bridges': {
         'ETH': {
             'TON -> ETH': None,
