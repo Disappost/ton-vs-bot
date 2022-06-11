@@ -14,13 +14,11 @@ speaking_dict = {
                '\n'
                'Welcome to the TON Foundation Support\.\n'
                '\n'
-               'We have a small team, and there are a lot of requests, so we cannot respond quickly or sometimes respond at all\. Please try to save our time by trying to solve your problem by yourself\.\n'
+               'We have a small team, and there are a lot of requests, so we cannot respond quickly or sometimes respond at all\.\n'
                '\n'
                'Please consider supporting us by sending some Toncoins\. You can send a check in this chat using [@CryptoBot](http://t.me/CryptoBot?start=r-2951) or @wallet, or ask for a Toncoin\-wallet address for donation\.\n'
                '\n'
-               # 'To change speaking language enter /lang.\n'
-               # '\n'
-               'To contact us just write your messages\.\n',
+               'To contact us just write your messages here as in an ordinary chat\.\n',
         # 'rus': '👋\n'
         #        '\n'
         #        'Приветствуем вас в поддержке TON Foundation.\n'

@@ -47,10 +47,10 @@ def gaga():
 
 
 def main():
-    start_message = 'start {}'.format(datetime.datetime.utcnow())
+    start_message = f'start {datetime.datetime.utcnow()}'
 
     if SHIT_COUNTER:
-        start_message += '\n\nSHIT_COUNTER: {}'.format(SHIT_COUNTER)
+        start_message += f'\n\nSHIT_COUNTER: {SHIT_COUNTER}'
 
     print(start_message + separator)
 
@@ -61,30 +61,22 @@ def main():
     try:
         if heroku:
             bot_token = os.environ['bot_token']
+            db_uri = os.environ['DATABASE_URL']
+            sslmode = 'require'
         else:
             bot_token = __import__('gag_secrets').bot_token
+            db_uri = __import__('gag_secrets').db_uri
+            sslmode = None
 
         BOT = telegram.Bot(bot_token)
 
         tg_delay(log_chat_id)
         BOT.send_message(log_chat_id, start_message, disable_notification=True)
 
-        if heroku:
-            db_url = os.environ['DATABASE_URL']
-            with psycopg2.connect(db_url, sslmode='require') as CON:
-                with CON.cursor() as CUR:
-                    while True:
-                        run()
-        else:
-            with psycopg2.connect(
-                    host='localhost',
-                    database='ton_vs_bot_db_2',
-                    user=__import__('gag_secrets').db_user,
-                    password=__import__('gag_secrets').db_password
-            ) as CON:
-                with CON.cursor() as CUR:
-                    while True:
-                        run()
+        with psycopg2.connect(db_uri, sslmode=sslmode) as CON:
+            with CON.cursor() as CUR:
+                while True:
+                    run()
 
     except:
         my_traceback(1)
@@ -112,7 +104,7 @@ def run():
         cleaning()
 
     except telegram.error.RetryAfter as exc:
-        retry_after_message = 'sleep {} seconds, because telegram.error.RetryAfter'.format(exc.retry_after)
+        retry_after_message = f'sleep {exc.retry_after} seconds, because telegram.error.RetryAfter'
         print(retry_after_message + separator)
         sleep(exc.retry_after)
         my_traceback(2, 'telegram.error.RetryAfter')
@@ -188,7 +180,7 @@ def handle_update(update):
         elif message.chat.id > 0:
             private_message(message)
 
-    elif update.edited_message and update.edited_message.text:
+    elif update.edited_message:
         handle_edited_message(message)
 
     elif update.callback_query:
@@ -503,8 +495,6 @@ def message_in_group(message):
 
 
 def private_message(message):
-    just_opened = False
-
     if message.text and message.text[0] == '/':
         command_in_pm(message)
         return
@@ -512,6 +502,14 @@ def private_message(message):
     if message.from_user.id in QUEUE_OF_MESSAGES_DICT:
         QUEUE_OF_MESSAGES_DICT[message.from_user.id].append(message)
         return
+
+    #
+
+    CUR.execute(
+        'SELECT group_message_id FROM message_ids WHERE user_id = %s',
+        (message.from_user.id,)
+    )
+    message_ids_query_result = CUR.fetchone()
 
     # user open status
 
@@ -538,7 +536,21 @@ def private_message(message):
             column_2=None
         )
 
-        just_opened = True
+        if message_ids_query_result:
+            group_message_id = message_ids_query_result[0]
+
+            tg_delay(group_chat_id)
+            sent_message = BOT.send_message(
+                group_chat_id,
+                '`🙋 user just opened`',
+                reply_to_message_id=group_message_id,
+                allow_sending_without_reply=True,
+                parse_mode='MarkdownV2'
+            )
+
+            opening_message_id = sent_message.message_id
+        else:
+            opening_message_id = None
 
         update_channel_posts(message.from_user)
 
@@ -559,6 +571,7 @@ def private_message(message):
         )
 
         subject_cell = {
+            'opening_message_id': opening_message_id,
             'menu_message_id': None,
             'subject_path': '',
             'posts_in_subject_channels': {
@@ -584,27 +597,9 @@ def private_message(message):
 
     #
 
-    CUR.execute(
-        'SELECT group_message_id FROM message_ids WHERE user_id = %s',
-        (message.from_user.id,)
-    )
-    query_result = CUR.fetchone()
-
-    if query_result:
-        message_id = query_result[0]
-
-        if just_opened:
-            tg_delay(group_chat_id)
-            BOT.send_message(
-                group_chat_id,
-                '`🙋 user just opened`',
-                reply_to_message_id=message_id,
-                allow_sending_without_reply=True,
-                parse_mode='MarkdownV2'
-            )
-
-        my_forward_message(group_chat_id, message, message_id)
-
+    if message_ids_query_result:
+        group_message_id = message_ids_query_result[0]
+        my_forward_message(group_chat_id, message, group_message_id)
     else:
         create_channel_post(message)
 
@@ -613,8 +608,6 @@ def handle_edited_message(edited_message):
     if edited_message.chat.id in QUEUE_OF_EDITED_MESSAGES_DICT:
         QUEUE_OF_EDITED_MESSAGES_DICT[edited_message.chat.id].append(edited_message)
         return
-
-    # checked edited_message.text exist before
 
     CUR.execute(
         'SELECT chat_id_1, message_id_1 FROM for_updating_messages WHERE chat_id_0 = %s AND message_id_0 = %s',
@@ -628,28 +621,127 @@ def handle_edited_message(edited_message):
             message_id_1 = query_result[1]
 
             tg_delay(chat_id_1)
-            BOT.edit_message_text(
-                edited_message.text,
-                chat_id_1,
-                message_id_1,
-                entities=edited_message.entities
-            )
+
+            # stickers and video_notes - not editable
+            # voices - editable only caption
+            if edited_message.text:
+                BOT.edit_message_text(
+                    edited_message.text,
+                    chat_id_1,
+                    message_id_1,
+                    entities=edited_message.entities
+                )
+                # history_column_1 = 'text'
+                # history_column_2 = edited_message.text
+            elif edited_message.photo:
+                file_id = edited_message.photo[-1].file_id
+                BOT.edit_message_media(
+                    chat_id_1,
+                    message_id_1,
+                    media=telegram.InputMediaPhoto(
+                        file_id,
+                        caption=edited_message.caption,
+                        caption_entities=edited_message.caption_entities
+                    )
+                )
+                # history_column_1 = 'photo'
+                # history_column_2 = f'{file_id}\n{edited_message.caption}'
+            elif edited_message.video:
+                file_id = edited_message.video.file_id
+                BOT.edit_message_media(
+                    chat_id_1,
+                    message_id_1,
+                    media=telegram.InputMediaVideo(
+                        file_id,
+                        caption=edited_message.caption,
+                        caption_entities=edited_message.caption_entities
+                    )
+                )
+                # history_column_1 = 'video'
+                # history_column_2 = f'{file_id}\n{edited_message.caption}'
+            elif edited_message.audio:
+                file_id = edited_message.audio.file_id
+                BOT.edit_message_media(
+                    chat_id_1,
+                    message_id_1,
+                    media=telegram.InputMediaAudio(
+                        file_id,
+                        caption=edited_message.caption,
+                        caption_entities=edited_message.caption_entities
+                    )
+                )
+                # history_column_1 = 'audio'
+                # history_column_2 = f'{file_id}\n{edited_message.caption}'
+            elif edited_message.voice:
+                BOT.edit_message_caption(
+                    chat_id_1,
+                    message_id_1,
+                    caption=edited_message.caption,
+                    caption_entities=edited_message.caption_entities
+                )
+                # history_column_1 = 'voice'
+                # history_column_2 = edited_message.caption
+            elif edited_message.animation:
+                file_id = edited_message.animation.file_id
+                BOT.edit_message_media(
+                    chat_id_1,
+                    message_id_1,
+                    media=telegram.InputMediaAnimation(
+                        file_id,
+                        caption=edited_message.caption,
+                        caption_entities=edited_message.caption_entities
+                    )
+                )
+                # history_column_1 = 'animation'
+                # history_column_2 = f'{file_id}\n{edited_message.caption}'
+            elif edited_message.document:
+                file_id = edited_message.document.file_id
+                BOT.edit_message_media(
+                    chat_id_1,
+                    message_id_1,
+                    media=telegram.InputMediaDocument(
+                        file_id,
+                        caption=edited_message.caption,
+                        caption_entities=edited_message.caption_entities
+                    )
+                )
+                # history_column_1 = 'document'
+                # history_column_2 = f'{file_id}\n{edited_message.caption}'
+            else:
+                report = f'info\n' \
+                         f'\n' \
+                         f'unsupported message type in handling edited message\n' \
+                         f'\n' \
+                         f'{str(edited_message)}'
+
+                print(report + separator)
+
+                tg_delay(log_chat_id)
+                BOT.send_message(log_chat_id, truncate_big_text(0, report))
+
+                return
+
+            history_column_1, history_column_2 = get_column_1_and_column_2(edited_message)
 
             if edited_message.chat.id == group_chat_id:
                 user_id = chat_id_1
                 volunteer_id = edited_message.from_user.id
-            else:
+                history_column_0 = edited_message.message_id
+            elif edited_message.chat.id > 0:
                 user_id = edited_message.from_user.id
                 volunteer_id = None
+                history_column_0 = message_id_1
+            else:
+                assert False
 
             add_to_history(
                 timestamp=edited_message.edit_date,
                 type='edited_message',
                 user_id=user_id,
                 volunteer_id=volunteer_id,
-                column_0=edited_message.message_id,
-                column_1='text',
-                column_2=edited_message.text
+                column_0=history_column_0,
+                column_1=history_column_1,
+                column_2=history_column_2
             )
 
         except telegram.error.BadRequest as exc:
@@ -714,7 +806,7 @@ def command_in_pm(message):
         type='message',
         user_id=message.from_user.id,
         volunteer_id=None,
-        column_0=message.message_id,
+        column_0=None,
         column_1='text',
         column_2=message.text
     )
@@ -1232,7 +1324,8 @@ class CommandsInGroup:
                 column_2=None
             )
 
-            speaking('user_have_been_opened', message, reply=True, mono=True, eng=True)
+            opening_message_id = speaking('user_have_been_opened', message, reply=True, mono=True, eng=True,
+                                          return_message_id=True)
 
             update_channel_posts(user_id)
 
@@ -1244,6 +1337,7 @@ class CommandsInGroup:
             )
 
             subject_cell = {
+                'opening_message_id': opening_message_id,
                 'menu_message_id': None,
                 'subject_path': '',
                 'posts_in_subject_channels': {
@@ -1407,44 +1501,49 @@ class CommandsInGroup:
 
                     # add to history
 
-                    column_1 = None
-                    column_2 = None
+                    # history_column_1 = None
+                    # history_column_2 = None
+                    #
+                    # if reply_to_message.text:
+                    #     history_column_1 = 'text'
+                    #     history_column_2 = reply_to_message.text
+                    #
+                    # elif reply_to_message.photo:
+                    #     history_column_1 = 'photo'
+                    #     history_column_2 = f'{reply_to_message.photo[-1].file_id}\n{reply_to_message.caption}'
+                    #
+                    # elif reply_to_message.sticker:
+                    #     history_column_1 = 'sticker'
+                    #     history_column_2 = reply_to_message.sticker.file_id
+                    #
+                    # elif reply_to_message.video:
+                    #     history_column_1 = 'video'
+                    #     history_column_2 = f'{reply_to_message.video.file_id}\n{reply_to_message.caption}'
+                    #
+                    # elif reply_to_message.audio:
+                    #     history_column_1 = 'audio'
+                    #     history_column_2 = f'{reply_to_message.audio.file_id}\n{reply_to_message.caption}'
+                    #
+                    # elif reply_to_message.voice:
+                    #     history_column_1 = 'voice'
+                    #     history_column_2 = f'{reply_to_message.voice.file_id}\n{reply_to_message.caption}'
+                    #
+                    # elif reply_to_message.video_note:
+                    #     history_column_1 = 'video_note'
+                    #     history_column_2 = reply_to_message.video_note.file_id
+                    #
+                    # elif reply_to_message.animation:
+                    #     history_column_1 = 'animation'
+                    #     history_column_2 = f'{reply_to_message.animation.file_id}\n{reply_to_message.caption}'
+                    #
+                    # elif reply_to_message.document:
+                    #     history_column_1 = 'document'
+                    #     history_column_2 = f'{reply_to_message.document.file_id}\n{reply_to_message.caption}'
+                    # else:
+                    #     history_column_1 = 'other_message_type'
+                    #     history_column_2 = None
 
-                    if reply_to_message.text:
-                        column_1 = 'text'
-                        column_2 = reply_to_message.text
-
-                    elif reply_to_message.photo:
-                        column_1 = 'photo'
-                        column_2 = reply_to_message.photo[-1].file_id
-
-                    elif reply_to_message.sticker:
-                        column_1 = 'sticker'
-                        column_2 = reply_to_message.sticker.file_id
-
-                    elif reply_to_message.video:
-                        column_1 = 'video'
-                        column_2 = reply_to_message.video.file_id
-
-                    elif reply_to_message.audio:
-                        column_1 = 'audio'
-                        column_2 = reply_to_message.audio.file_id
-
-                    elif reply_to_message.voice:
-                        column_1 = 'voice'
-                        column_2 = reply_to_message.voice.file_id
-
-                    elif reply_to_message.video_note:
-                        column_1 = 'video_note'
-                        column_2 = reply_to_message.video_note.file_id
-
-                    elif reply_to_message.animation:
-                        column_1 = 'animation'
-                        column_2 = reply_to_message.animation.file_id
-
-                    elif reply_to_message.document:
-                        column_1 = 'document'
-                        column_2 = reply_to_message.document.file_id
+                    history_column_1, history_column_2 = get_column_1_and_column_2(reply_to_message)
 
                     add_to_history(
                         timestamp=message.date,
@@ -1452,8 +1551,8 @@ class CommandsInGroup:
                         user_id=chat_id,
                         volunteer_id=message.from_user.id,
                         column_0=reply_to_message.message_id,
-                        column_1=column_1,
-                        column_2=column_2
+                        column_1=history_column_1,
+                        column_2=history_column_2
                     )
 
                 except telegram.error.BadRequest as exc:
@@ -1480,6 +1579,7 @@ class CommandsInGroup:
             subject_cell = query_result[0]
 
             if subject_cell:
+                opening_message_id = subject_cell['opening_message_id']
                 subject_path = subject_cell['subject_path']
                 if subject_path:
                     subject_list = subject_path.split('/')
@@ -1487,6 +1587,7 @@ class CommandsInGroup:
                     subject_list = []
                 posts_in_subject_channels = subject_cell['posts_in_subject_channels']
             else:
+                opening_message_id = None
                 subject_path = ''
                 subject_list = []
                 posts_in_subject_channels = {}
@@ -1526,6 +1627,7 @@ class CommandsInGroup:
             )
 
             new_subject_cell = {
+                'opening_message_id': opening_message_id,
                 'menu_message_id': sent_message.message_id,
                 'subject_path': subject_path,
                 'posts_in_subject_channels': posts_in_subject_channels
@@ -1563,7 +1665,7 @@ def subject_callback(update):
     if callback_query.from_user.id != callback_query.message.reply_to_message.from_user.id:
         BOT.answer_callback_query(
             callback_query.id,
-            'This message is not for you. Use /command.',
+            'This message is not for you. Use appropriate /command.',
             show_alert=True
         )
         return
@@ -1584,6 +1686,8 @@ def subject_callback(update):
                 show_alert=True
             )
             return
+
+        opening_message_id = subject_cell['opening_message_id']
 
         menu_message_id = subject_cell['menu_message_id']
         if callback_query.message.message_id != menu_message_id:
@@ -1616,7 +1720,7 @@ def subject_callback(update):
                     callback_query.message.message_id
                 )
             elif mode == 'close':
-                close_user(callback_query, user_id, subject_path)
+                close_user(callback_query, user_id)
             return
         elif third_part == '❌':
             tg_delay(callback_query.message.chat.id)
@@ -1681,6 +1785,7 @@ def subject_callback(update):
         old_subject_channels_set = set(old_posts_in_subject_channels.keys())
 
         new_subject_cell = {
+            'opening_message_id': opening_message_id,
             'menu_message_id': menu_message_id,
             'subject_path': new_subject_path,
             'posts_in_subject_channels': subject_cell['posts_in_subject_channels']
@@ -1722,6 +1827,7 @@ def subject_callback(update):
                     actual_posts_in_subject_channels[chat_id] = current_dict[chat_id]
 
         new_subject_cell = {
+            'opening_message_id': opening_message_id,
             'menu_message_id': menu_message_id,
             'subject_path': new_subject_path,
             'posts_in_subject_channels': actual_posts_in_subject_channels
@@ -1803,7 +1909,7 @@ def get_subject_reply_markup(mode, subject_path, subject_dir_list, user_id):
     return reply_markup
 
 
-def close_user(callback_query, user_id, subject_path):
+def close_user(callback_query, user_id):
     CUR.execute(
         'SELECT subject FROM open_users WHERE user_id = %s',
         (user_id,)
@@ -1812,6 +1918,13 @@ def close_user(callback_query, user_id, subject_path):
 
     if query_result:
         subject_cell = query_result[0]
+
+        if subject_cell:
+            opening_message_id = subject_cell['opening_message_id']
+            subject_path = subject_cell['subject_path']
+        else:
+            opening_message_id = None
+            subject_path = None
 
         CUR.execute(
             'DELETE FROM open_users WHERE user_id = %s',
@@ -1829,7 +1942,7 @@ def close_user(callback_query, user_id, subject_path):
             volunteer_id=callback_query.from_user.id,
             column_0='close_user',
             column_1=subject_path,
-            column_2=None
+            column_2=opening_message_id
         )
 
         if not subject_path:
@@ -2102,6 +2215,7 @@ def tg_delay(target_chat_id):
 
 def my_forward_message(to_chat, message, reply_to_message_id=None):
     sent_message = None
+    history_column_0 = None
     history_column_1 = None
     history_column_2 = None
 
@@ -2115,7 +2229,7 @@ def my_forward_message(to_chat, message, reply_to_message_id=None):
 
             sent_message = BOT.send_message(
                 to_chat,
-                f'{tg_wallet_bots_dict[message.via_bot.id]}: {message.text}',
+                f'{tg_wallet_bots_dict[message.via_bot.id]}\n{message.text}',
                 reply_to_message_id=reply_to_message_id,
                 reply_markup=message.reply_markup
             )
@@ -2133,45 +2247,47 @@ def my_forward_message(to_chat, message, reply_to_message_id=None):
                 reply_to_message_id=reply_to_message_id
             )
 
-            if message.text:
-                history_column_1 = 'text'
-                history_column_2 = message.text
+            # if message.text:
+            #     history_column_1 = 'text'
+            #     history_column_2 = message.text
+            #
+            # elif message.photo:
+            #     history_column_1 = 'photo'
+            #     history_column_2 = f'{message.photo[-1].file_id}\n{message.caption}'
+            #
+            # elif message.sticker:
+            #     history_column_1 = 'sticker'
+            #     history_column_2 = message.sticker.file_id
+            #
+            # elif message.video:
+            #     history_column_1 = 'video'
+            #     history_column_2 = f'{message.video.file_id}\n{message.caption}'
+            #
+            # elif message.audio:
+            #     history_column_1 = 'audio'
+            #     history_column_2 = f'{message.audio.file_id}\n{message.caption}'
+            #
+            # elif message.voice:
+            #     history_column_1 = 'voice'
+            #     history_column_2 = f'{message.voice.file_id}\n{message.caption}'
+            #
+            # elif message.video_note:
+            #     history_column_1 = 'video_note'
+            #     history_column_2 = message.video_note.file_id
+            #
+            # elif message.animation:
+            #     history_column_1 = 'animation'
+            #     history_column_2 = f'{message.animation.file_id}\n{message.caption}'
+            #
+            # elif message.document:
+            #     history_column_1 = 'document'
+            #     history_column_2 = f'{message.document.file_id}\n{message.caption}'
+            #
+            # else:
+            #     history_column_1 = 'other_message_type'
+            #     history_column_2 = None
 
-            elif message.photo:
-                history_column_1 = 'photo'
-                history_column_2 = message.photo[-1].file_id
-
-            elif message.sticker:
-                history_column_1 = 'sticker'
-                history_column_2 = message.sticker.file_id
-
-            elif message.video:
-                history_column_1 = 'video'
-                history_column_2 = message.video.file_id
-
-            elif message.audio:
-                history_column_1 = 'audio'
-                history_column_2 = message.audio.file_id
-
-            elif message.voice:
-                history_column_1 = 'voice'
-                history_column_2 = message.voice.file_id
-
-            elif message.video_note:
-                history_column_1 = 'video_note'
-                history_column_2 = message.video_note.file_id
-
-            elif message.animation:
-                history_column_1 = 'animation'
-                history_column_2 = message.animation.file_id
-
-            elif message.document:
-                history_column_1 = 'document'
-                history_column_2 = message.document.file_id
-
-            else:
-                history_column_1 = 'other_message_type'
-                history_column_2 = None
+            history_column_1, history_column_2 = get_column_1_and_column_2(message)
 
     except telegram.error.BadRequest as exc:
         if str(exc) == 'Replied message not found':
@@ -2201,6 +2317,7 @@ def my_forward_message(to_chat, message, reply_to_message_id=None):
     elif to_chat > 0:
         user_id = to_chat
         volunteer_id = message.from_user.id
+        history_column_0 = message.message_id
     else:
         assert False
 
@@ -2226,19 +2343,88 @@ def my_forward_message(to_chat, message, reply_to_message_id=None):
         )
         CON.commit()
 
+        if to_chat == group_chat_id:
+            history_column_0 = sent_message.message_id
+
     add_to_history(
         timestamp=message.date,
         type='message',
         user_id=user_id,
         volunteer_id=volunteer_id,
-        column_0=message.message_id,
+        column_0=history_column_0,
         column_1=history_column_1,
         column_2=history_column_2
     )
 
 
+def get_column_1_and_column_2(message):
+    if message.text:
+        history_column_1 = 'text'
+        history_column_2 = message.text
+
+    elif message.photo:
+        photo = message.photo[-1]
+        history_column_1 = 'photo'
+        history_column_2 = f'{photo.file_unique_id}\n' \
+                           f'{photo.file_id}\n' \
+                           f'{message.caption}'
+
+    elif message.sticker:
+        sticker = message.sticker
+        history_column_1 = 'sticker'
+        history_column_2 = f'{sticker.file_unique_id}\n' \
+                           f'{sticker.file_id}'
+
+    elif message.video:
+        video = message.video
+        history_column_1 = 'video'
+        history_column_2 = f'{video.file_unique_id}\n' \
+                           f'{video.file_id}\n' \
+                           f'{message.caption}'
+
+    elif message.audio:
+        audio = message.audio
+        history_column_1 = 'audio'
+        history_column_2 = f'{audio.file_unique_id}\n' \
+                           f'{audio.file_id}\n' \
+                           f'{message.caption}'
+
+    elif message.voice:
+        voice = message.voice
+        history_column_1 = 'voice'
+        history_column_2 = f'{voice.file_unique_id}\n' \
+                           f'{voice.file_id}\n' \
+                           f'{message.caption}'
+
+    elif message.video_note:
+        video_note = message.video_note
+        history_column_1 = 'video_note'
+        history_column_2 = f'{video_note.file_unique_id}\n' \
+                           f'{video_note.file_id}'
+
+    elif message.animation:
+        animation = message.animation
+        history_column_1 = 'animation'
+        history_column_2 = f'{animation.file_unique_id}\n' \
+                           f'{animation.file_id}\n' \
+                           f'{message.caption}'
+
+    elif message.document:
+        document = message.document
+        history_column_1 = 'document'
+        history_column_2 = f'{document.file_unique_id}\n' \
+                           f'{document.file_id}\n' \
+                           f'{message.caption}'
+
+    else:
+        history_column_1 = 'other_message_type'
+        history_column_2 = None
+
+    return history_column_1, history_column_2
+
+
 def speaking(speaking_keyword, message, reply=False, mono=False, cut_big_text=False, add_info=None, eng=False,
-             markdown=False):
+             markdown=False, return_message_id=False):
     # !
     # don't use mono=True and cut_bit_text=True together
     # don't use markdown=True and cut_bit_text=True together
@@ -2282,7 +2468,7 @@ def speaking(speaking_keyword, message, reply=False, mono=False, cut_big_text=Fa
             answer = truncate_big_text(0, answer)
 
         tg_delay(message.chat.id)
-        BOT.send_message(
+        sent_message = BOT.send_message(
             message.chat.id,
             answer,
             reply_to_message_id=reply_to_message_id,
@@ -2290,6 +2476,9 @@ def speaking(speaking_keyword, message, reply=False, mono=False, cut_big_text=Fa
             parse_mode=parse_mode,
             disable_web_page_preview=True
         )
+
+        if return_message_id:
+            return sent_message.message_id
 
     else:
         report = f'no answer in speaking()\n' \
@@ -2334,7 +2523,7 @@ def get_user_language(tg_message_or_user):
         message = None
         tg_user = tg_message_or_user
     else:
-        raise Exception('?')
+        assert False
 
     CUR.execute(
         'SELECT language FROM languages_of_users WHERE user_id = %s',
