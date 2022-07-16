@@ -1713,12 +1713,22 @@ def subject_callback(update):
                     text = 'empty\n'
                 text += '\n✅'
 
-                tg_delay(callback_query.message.chat.id)
-                BOT.edit_message_text(
-                    text,
-                    callback_query.message.chat.id,
-                    callback_query.message.message_id
-                )
+                try:
+                    tg_delay(callback_query.message.chat.id)
+                    BOT.edit_message_text(
+                        text,
+                        callback_query.message.chat.id,
+                        callback_query.message.message_id
+                    )
+                except telegram.error.BadRequest as exc:
+                    error_text = 'Message is not modified: specified new message content and reply markup are ' \
+                                 'exactly the same as a current content and reply markup of the message'
+
+                    if str(exc) == error_text:
+                        pass
+                    else:
+                        raise exc
+
             elif mode == 'close':
                 close_user(callback_query, user_id)
             return
@@ -1963,10 +1973,28 @@ def close_user(callback_query, user_id):
 
         for chat_id in subject_cell['posts_in_subject_channels']:
             tg_delay(int(chat_id))
-            BOT.delete_message(
-                int(chat_id),
-                subject_cell['posts_in_subject_channels'][chat_id],
-            )
+
+            try:
+                BOT.delete_message(
+                    int(chat_id),
+                    subject_cell['posts_in_subject_channels'][chat_id],
+                )
+            except telegram.error.BadRequest as exc:
+                error_text = "Message can't be deleted"
+
+                if str(exc) == error_text:
+                    edited_text = '🟢 closed\n' \
+                                  '\n' \
+                                  'post of closed user is too old and cannot be deleted by bot'
+
+                    BOT.edit_message_text(
+                        edited_text,
+                        int(chat_id),
+                        subject_cell['posts_in_subject_channels'][chat_id]
+                    )
+
+                else:
+                    raise exc
 
         update_channel_posts(user_id)
 
