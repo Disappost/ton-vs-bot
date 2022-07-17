@@ -1,11 +1,11 @@
 tg_languages_dict = {
     'en': 'eng',
-    # 'ru': 'rus'
+    'ru': 'rus'
 }
 
 languages_dict = {
     'eng': 'english',
-    # 'rus': 'russian'
+    'rus': 'russian'
 }
 
 speaking_dict = {
@@ -18,7 +18,9 @@ speaking_dict = {
                '\n'
                'Please consider supporting us by sending some Toncoins\. You can send a check in this chat using [@CryptoBot](http://t.me/CryptoBot?start=r-2951) or @wallet, or ask for a Toncoin\-wallet address for donation\.\n'
                '\n'
-               'To contact us just write your messages here as in an ordinary chat\.\n',
+               'To contact us just write \(edit\) your messages here as in an ordinary chat\.\n'
+               '\n'
+               'You can use English and Russian languages\.\n',
         # 'rus': '👋\n'
         #        '\n'
         #        'Приветствуем вас в поддержке TON Foundation.\n'
@@ -112,7 +114,7 @@ speaking_dict = {
     },
 
     'user_have_been_muted_until': {
-        'eng': '✅ user have been until ',
+        'eng': '✅ user have been muted until ',
         # 'rus': '✅ юзер был замучен до '
     },
 
