@@ -1734,10 +1734,24 @@ def subject_callback(update):
             return
         elif third_part == '❌':
             tg_delay(callback_query.message.chat.id)
-            BOT.delete_message(
-                callback_query.message.chat.id,
-                callback_query.message.message_id
-            )
+            try:
+                BOT.delete_message(
+                    callback_query.message.chat.id,
+                    callback_query.message.message_id
+                )
+            except telegram.error.BadRequest as exc:
+                error_text = "Message can't be deleted"
+
+                if str(exc) == error_text:
+                    edited_text = '❌'
+
+                    BOT.edit_message_text(
+                        edited_text,
+                        callback_query.message.chat.id,
+                        callback_query.message.message_id
+                    )
+                else:
+                    raise exc
             return
         elif third_part == '⬅':
             new_subject_list = old_subject_list[0:-1]
@@ -1825,10 +1839,27 @@ def subject_callback(update):
 
         for chat_id in old_subject_channels_set - new_subject_channels_set:
             tg_delay(chat_id)
-            BOT.delete_message(
-                chat_id,
-                old_posts_in_subject_channels[chat_id],
-            )
+            try:
+                BOT.delete_message(
+                    chat_id,
+                    old_posts_in_subject_channels[chat_id],
+                )
+            except telegram.error.BadRequest as exc:
+                error_text = "Message can't be deleted"
+
+                if str(exc) == error_text:
+                    edited_text = '❌ the post is not actual\n' \
+                                  '\n' \
+                                  'the post is too old and cannot be deleted by bot'
+
+                    BOT.edit_message_text(
+                        edited_text,
+                        chat_id,
+                        old_posts_in_subject_channels[chat_id]
+                    )
+
+                else:
+                    raise exc
 
         actual_posts_in_subject_channels = {}
         for current_dict in old_posts_in_subject_channels, new_channel_posts_dict:
@@ -1985,7 +2016,7 @@ def close_user(callback_query, user_id):
                 if str(exc) == error_text:
                     edited_text = '🟢 closed\n' \
                                   '\n' \
-                                  'post of closed user is too old and cannot be deleted by bot'
+                                  'the post of closed user is too old and cannot be deleted by bot'
 
                     BOT.edit_message_text(
                         edited_text,
